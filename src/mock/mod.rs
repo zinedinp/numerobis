@@ -1,6 +1,6 @@
 //! Mock backend (feature `mock`, tests only): runs the Emulated semantics on
 //! the host with the miraculix codecs, synchronously. It is the oracle for
-//! every real tier (plan B.3 step 1, B.5).
+//! every real tier.
 //!
 //! [`codec`] is split by format kind, [`kernels`] by op kind.
 

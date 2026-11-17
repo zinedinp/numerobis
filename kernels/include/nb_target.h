@@ -1,5 +1,6 @@
 /* Target layer: the only place that differs between AMDGPU, NVPTX, SPIR-V
- * and the host build used by the test suite (NB_HOST).
+ * and the C builds (NB_HOST): the host test driver and the freestanding
+ * Tenstorrent RISC-V runtime (kernels/tt).
  *
  * Every build uses -ffp-contract=off: results must match the Rust oracle,
  * which never fuses a*b+c unless it calls fma explicitly. */
@@ -8,7 +9,6 @@
 
 #if defined(NB_HOST)
 #include <stdint.h>
-#include <string.h>
 typedef uint8_t uchar;
 typedef uint16_t ushort;
 typedef uint32_t uint;
@@ -17,8 +17,8 @@ typedef uint32_t uint;
 #define NB_INLINE static inline
 extern uint nb_host_gid;
 #define NB_GID() nb_host_gid
-NB_INLINE uint nb_f2u(float x) { uint u; memcpy(&u, &x, 4); return u; }
-NB_INLINE float nb_u2f(uint u) { float x; memcpy(&x, &u, 4); return x; }
+NB_INLINE uint nb_f2u(float x) { uint u; __builtin_memcpy(&u, &x, 4); return u; }
+NB_INLINE float nb_u2f(uint u) { float x; __builtin_memcpy(&x, &u, 4); return x; }
 #pragma STDC FP_CONTRACT OFF
 #else
 #pragma OPENCL FP_CONTRACT OFF

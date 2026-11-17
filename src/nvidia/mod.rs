@@ -1,4 +1,4 @@
-//! NVIDIA GPUs via the open kernel modules (plan B.3 step 6).
+//! NVIDIA GPUs via the open kernel modules.
 //!
 //! Raw path (feature `nvidia`): RM objects on `/dev/nvidiactl`, GPU virtual
 //! memory through `/dev/nvidia-uvm`, a GPFIFO channel pair (compute + copy)

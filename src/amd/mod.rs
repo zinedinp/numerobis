@@ -1,4 +1,4 @@
-//! AMD GPUs via KFD (plan B.3 step 5).
+//! AMD GPUs via KFD.
 //!
 //! Raw: AQL queue, doorbell, signals; HSACO from the shared `.cl` source,
 //! MFMA/WMMA through `nb_amd.h`.

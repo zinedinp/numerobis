@@ -1,4 +1,4 @@
-//! Stage-1 ops (plan B.1), one module per calculation kind:
+//! Stage-1 ops, one module per calculation kind:
 //!
 //! | Module | Ops | Kernel names |
 //! |---|---|---|

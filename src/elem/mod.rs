@@ -1,4 +1,4 @@
-//! Element types (plan A.5), split by kind like `miraculix::formats`:
+//! Element types, split by kind like `miraculix::formats`:
 //! [`float`] (F32, TF32, F16/BF16, FP8, FP6, FP4), [`int`] (I32, I8, U8 and
 //! packed I4/U4/I2/I1) and [`block`] (MX, NVFP4, BFP_B, GGUF).
 //!

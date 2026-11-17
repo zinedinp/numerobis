@@ -6,6 +6,7 @@
  * or 4 value bytes. stdout: the bytes of every buffer arg, in order. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../src/all.cl"
 

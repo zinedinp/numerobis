@@ -1,4 +1,4 @@
-//! Engine model and feature sets (plan A.1, B.2b).
+//! Engine model and feature sets.
 
 use crate::tiers::Tier;
 
@@ -57,7 +57,7 @@ pub struct FeatureSet {
     /// Human-readable name (`"Intel Arc B580"`, `"mock"`).
     pub name: String,
     pub class: DeviceClass,
-    /// Driver name and version as reported by the kernel (plan C.4).
+    /// Driver name and version as reported by the kernel.
     pub driver: String,
     /// Reachable engines and the access layer for each.
     pub engines: Vec<(Engine, Access)>,

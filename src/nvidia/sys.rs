@@ -7,7 +7,7 @@
 //! size assert taken from a C `sizeof` dump of those headers. The QMD layout
 //! (`qmd.rs`) comes from NVIDIA's `open-gpu-doc` (`clc6c0qmd.h`).
 //!
-//! The RM ABI is not stable across driver versions (plan C.4, "Versions-Whitelist"):
+//! The RM ABI is not stable across driver versions:
 //! [`TESTED_DRIVERS`] lists the versions these layouts were checked against.
 
 #![allow(non_camel_case_types, non_snake_case, dead_code)]

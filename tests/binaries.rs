@@ -24,7 +24,7 @@ fn check(dir: &str, ext: &str, want_machine: u16, kernel_symbol: impl Fn(&str) -
             assert!(syms.iter().any(|x| x.name == want && x.shndx != 0), "{}: missing {want}", path.display());
         }
         // `.nv.*` (e.g. `.nv.reservedSmem.offset0` on sm_120) are loader-resolved
-        // reserved symbols, not library imports; the raw NVIDIA loader (B.3 step 6)
+        // reserved symbols, not library imports; the raw NVIDIA loader
         // has to patch them.
         let undefined: Vec<_> = syms
             .iter()
@@ -46,6 +46,27 @@ fn amd_hsaco() {
 #[test]
 fn nvidia_cubin() {
     assert_eq!(check("nvidia", "cubin", machine::CUDA, |s| s.to_string()), 5);
+}
+
+#[test]
+fn tenstorrent_image() {
+    // BRISC image: ELF32 RISC-V, entry at the hard-wired reset PC 0, the
+    // dispatcher and soft-float linked, nothing unresolved, everything below
+    // the mailbox at 0x18000.
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("kernels/bin/tt/blackhole-emulated.elf");
+    let b = std::fs::read(&p).unwrap();
+    let elf = Elf::parse(&b).unwrap();
+    assert!(elf.is32);
+    assert_eq!(elf.machine, machine::RISCV);
+    assert_eq!(elf.entry, 0, "entry must be the reset PC");
+    let syms = elf.symbols().unwrap();
+    for want in ["_start", "nb_main", "fmaf", "__divsf3"] {
+        assert!(syms.iter().any(|s| s.name == want && s.shndx != 0), "missing {want}");
+    }
+    assert!(syms.iter().all(|s| s.shndx != 0 || s.name.is_empty()), "unresolved symbols");
+    for s in elf.sections.iter().filter(|s| s.flags & 2 != 0) {
+        assert!(s.addr + s.size <= 0x18000, "{} overlaps the mailbox", s.name);
+    }
 }
 
 #[test]

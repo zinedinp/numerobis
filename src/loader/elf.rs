@@ -1,5 +1,5 @@
-//! Minimal ELF64 little-endian reader for kernel binaries: AMD HSACO, NVIDIA
-//! cubin, Intel Gen ELF (ocloc), RISC-V ELF (Tenstorrent). Only parses what a
+//! Minimal ELF little-endian reader (ELF64 and ELF32) for kernel binaries:
+//! AMD HSACO, NVIDIA cubin, Intel Gen ELF (ocloc), RISC-V ELF32 (Tenstorrent). Only parses what a
 //! loader needs (sections, symbols, notes); never executes or relocates.
 
 use crate::runtime::error::{Error, Result};
@@ -48,10 +48,14 @@ pub struct Symbol<'a> {
     pub shndx: u16,
 }
 
-/// A parsed ELF64 image borrowing the input bytes.
+/// A parsed ELF image borrowing the input bytes.
 #[derive(Debug, Clone)]
 pub struct Elf<'a> {
+    /// ELF32 (RISC-V kernels) rather than ELF64.
+    pub is32: bool,
     pub machine: u16,
+    /// Entry point.
+    pub entry: u64,
     /// `e_flags` (gfx target on AMDGPU, SM version on CUDA).
     pub flags: u32,
     pub sections: Vec<Section<'a>>,
@@ -91,28 +95,38 @@ impl<'a> Elf<'a> {
         if b.get(..4) != Some(b"\x7fELF") {
             return Err(bad("not ELF"));
         }
-        if b.get(4) != Some(&2) || b.get(5) != Some(&1) {
-            return Err(bad("only ELF64 little-endian is supported"));
-        }
+        let is32 = match (b.get(4), b.get(5)) {
+            (Some(1), Some(1)) => true,
+            (Some(2), Some(1)) => false,
+            _ => return Err(bad("only little-endian ELF32/ELF64 is supported")),
+        };
+        // Word-size dependent field reader: u32 in ELF32, u64 in ELF64.
+        let word = |o32: usize, o64: usize| -> Result<u64> { if is32 { Ok(u32_at(b, o32)? as u64) } else { u64_at(b, o64) } };
         let machine = u16_at(b, 18)?;
-        let flags = u32_at(b, 48)?;
-        let shoff = usize_of(u64_at(b, 40)?)?;
-        let shentsize = u16_at(b, 58)? as usize;
-        let shnum = u16_at(b, 60)? as usize;
-        let shstrndx = u16_at(b, 62)? as usize;
+        let entry = word(24, 24)?;
+        let flags = if is32 { u32_at(b, 36)? } else { u32_at(b, 48)? };
+        let shoff = usize_of(word(32, 40)?)?;
+        let (shentsize, shnum, shstrndx) = if is32 {
+            (u16_at(b, 46)? as usize, u16_at(b, 48)? as usize, u16_at(b, 50)? as usize)
+        } else {
+            (u16_at(b, 58)? as usize, u16_at(b, 60)? as usize, u16_at(b, 62)? as usize)
+        };
         if shnum == 0 {
-            return Ok(Elf { machine, flags, sections: Vec::new() });
+            return Ok(Elf { is32, machine, entry, flags, sections: Vec::new() });
         }
-        if shentsize < 64 {
+        if shentsize < if is32 { 40 } else { 64 } {
             return Err(bad("section header size"));
         }
         let hdr = |i: usize| -> Result<Shdr<'a>> {
             let h = shoff.checked_add(i.checked_mul(shentsize).ok_or_else(|| bad("overflow"))?).ok_or_else(|| bad("overflow"))?;
+            // (offset in ELF32, offset in ELF64) per field.
+            let w = |o32: usize, o64: usize| -> Result<u64> { if is32 { Ok(u32_at(b, h + o32)? as u64) } else { u64_at(b, h + o64) } };
             let kind = u32_at(b, h + 4)?;
-            let (off, size) = (usize_of(u64_at(b, h + 24)?)?, usize_of(u64_at(b, h + 32)?)?);
+            let (off, size) = (usize_of(w(16, 24)?)?, usize_of(w(20, 32)?)?);
+            let (link, info) = if is32 { (u32_at(b, h + 24)?, u32_at(b, h + 28)?) } else { (u32_at(b, h + 40)?, u32_at(b, h + 44)?) };
             // SHT_NOBITS (.bss) has no file data.
             let data = if kind == 8 { &b[..0] } else { b.get(off..off.checked_add(size).ok_or_else(|| bad("overflow"))?).ok_or_else(|| bad("section out of range"))? };
-            Ok((u32_at(b, h)?, kind, u64_at(b, h + 8)?, u64_at(b, h + 16)?, data, u32_at(b, h + 40)?, u32_at(b, h + 44)?, off as u64, size as u64, u64_at(b, h + 56)?))
+            Ok((u32_at(b, h)?, kind, w(8, 8)?, w(12, 16)?, data, link, info, off as u64, size as u64, w(36, 56)?))
         };
         let strtab = hdr(shstrndx)?.4;
         let mut sections = Vec::with_capacity(shnum);
@@ -120,7 +134,7 @@ impl<'a> Elf<'a> {
             let (name, kind, flags, addr, data, link, info, offset, size, entsize) = hdr(i)?;
             sections.push(Section { name: cstr(strtab, name as usize)?, kind, flags, addr, data, link, info, offset, size, entsize });
         }
-        Ok(Elf { machine, flags, sections })
+        Ok(Elf { is32, machine, entry, flags, sections })
     }
 
     pub fn section(&self, name: &str) -> Option<&Section<'a>> {
@@ -132,14 +146,26 @@ impl<'a> Elf<'a> {
         let mut out = Vec::new();
         for s in self.sections.iter().filter(|s| s.kind == SHT_SYMTAB || s.kind == SHT_DYNSYM) {
             let strs = self.sections.get(s.link as usize).ok_or_else(|| bad("symtab link"))?.data;
-            for e in s.data.as_chunks::<24>().0 {
-                out.push(Symbol {
-                    name: cstr(strs, u32_at(e, 0)? as usize)?,
-                    info: e[4],
-                    shndx: u16_at(e, 6)?,
-                    value: u64_at(e, 8)?,
-                    size: u64_at(e, 16)?,
-                });
+            if self.is32 {
+                for e in s.data.as_chunks::<16>().0 {
+                    out.push(Symbol {
+                        name: cstr(strs, u32_at(e, 0)? as usize)?,
+                        value: u32_at(e, 4)? as u64,
+                        size: u32_at(e, 8)? as u64,
+                        info: e[12],
+                        shndx: u16_at(e, 14)?,
+                    });
+                }
+            } else {
+                for e in s.data.as_chunks::<24>().0 {
+                    out.push(Symbol {
+                        name: cstr(strs, u32_at(e, 0)? as usize)?,
+                        info: e[4],
+                        shndx: u16_at(e, 6)?,
+                        value: u64_at(e, 8)?,
+                        size: u64_at(e, 16)?,
+                    });
+                }
             }
         }
         Ok(out)
@@ -189,7 +215,7 @@ mod tests {
         assert!(Elf::parse(b"nope").is_err());
         let mut h = vec![0u8; 64];
         h[..4].copy_from_slice(b"\x7fELF");
-        h[4] = 1;
+        h[4] = 3;
         assert!(Elf::parse(&h).is_err());
         h[4] = 2;
         h[5] = 1;

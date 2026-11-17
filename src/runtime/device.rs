@@ -1,4 +1,4 @@
-//! Devices and placement (plan B.2b).
+//! Devices and placement.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -51,13 +51,15 @@ impl Device {
 
     /// Every device the compiled-in backends can open.
     ///
-    /// Raw backends are added here as their B.3 steps land (features
-    /// `nvidia`, `tt`). Devices that fail to open are skipped.
+    /// Every raw backend of the enabled features (`nvidia`, `tt`). Devices
+    /// that fail to open are skipped.
     pub fn all() -> Vec<Device> {
         #[allow(unused_mut)]
         let mut v = Vec::new();
         #[cfg(all(feature = "nvidia", target_os = "linux"))]
         v.extend(crate::nvidia::backend::open_all());
+        #[cfg(all(feature = "tt", target_os = "linux"))]
+        v.extend(crate::tt::backend::open_all());
         v
     }
 

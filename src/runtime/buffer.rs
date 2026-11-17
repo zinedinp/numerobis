@@ -1,4 +1,4 @@
-//! Device buffers (plan A.4, C.1).
+//! Device buffers.
 
 use std::marker::PhantomData;
 use std::sync::Arc;

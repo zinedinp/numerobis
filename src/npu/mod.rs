@@ -1,4 +1,4 @@
-//! NPUs: SoC matrix accelerators next to CPU and iGPU (plan B.2b).
+//! NPUs: SoC matrix accelerators next to CPU and iGPU.
 //!
 //! They run precompiled command streams, not SIMT kernels, and only report
 //! `Engine::Matrix` (plus `Copy`). All Linux NPU drivers live in the `accel`

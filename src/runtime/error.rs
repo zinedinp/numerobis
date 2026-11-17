@@ -1,4 +1,4 @@
-//! One error type for every backend (plan C.3).
+//! One error type for every backend.
 
 use core::fmt;
 use std::time::Duration;

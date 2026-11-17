@@ -2,7 +2,7 @@
 //! QMD launches of the shared Emulated kernels (`kernels/bin/nvidia`).
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use super::gpu::{Alloc, Gpu, Mem, cards};
@@ -87,7 +87,20 @@ pub fn probe() -> Vec<Result<Device>> {
         Err(e) => return vec![Err(e)],
     };
     list.into_iter()
-        .map(|(minor, gpu_id, _)| NvBackend::open(minor, gpu_id, &version).map(|b| Device::from_backend(Arc::new(b))))
+        .map(|(minor, gpu_id, _)| {
+            // One backend per GPU per process: opening costs RM objects, UVM
+            // registration, channels and a kernel upload, and the GPU may also
+            // drive the display.
+            static OPEN: Mutex<Vec<(u32, Weak<NvBackend>)>> = Mutex::new(Vec::new());
+            let mut open = OPEN.lock().unwrap_or_else(|e| e.into_inner());
+            open.retain(|(_, w)| w.strong_count() > 0);
+            if let Some(b) = open.iter().find(|(m, _)| *m == minor).and_then(|(_, w)| w.upgrade()) {
+                return Ok(Device::from_backend(b));
+            }
+            let b = Arc::new(NvBackend::open(minor, gpu_id, &version)?);
+            open.push((minor, Arc::downgrade(&b)));
+            Ok(Device::from_backend(b))
+        })
         .collect()
 }
 

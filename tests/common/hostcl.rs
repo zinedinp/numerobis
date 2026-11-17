@@ -3,6 +3,11 @@
 //! `kernels/host/driver.c`, and every launch from `runtime::abi::lower`
 //! runs in that process. Same `Backend` contract as a GPU backend, so the
 //! whole test suite checks kernel source against the Rust oracle.
+//!
+//! [`HostCl::rv32`] builds the Tenstorrent flavour instead: the same
+//! sources for RV32IM with `kernels/tt/softfloat.c` (exactly the code of
+//! `kernels/bin/tt`), driven by `kernels/tt/qemu_driver.c` under
+//! `qemu-riscv32`.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -16,23 +21,55 @@ use numerobis::runtime::abi::{Launch, lower};
 use numerobis::runtime::{Arg, Backend, BufId, Fence, KernelId, KernelKey, OpSig};
 use numerobis::{Device, Error, Result, Tier};
 
+fn build(cc: &str, args: &[&str], what: &str) {
+    let out = Command::new(cc)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("cannot run {cc} to build the {what}: {e}"));
+    assert!(out.status.success(), "{what} build failed:\n{}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn rv32_driver() -> &'static PathBuf {
+    static EXE: OnceLock<PathBuf> = OnceLock::new();
+    EXE.get_or_init(|| {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("nb-rv32-driver-{}", std::process::id()));
+        let inc = root.join("kernels/include");
+        let (drv, sf) = (root.join("kernels/tt/qemu_driver.c"), root.join("kernels/tt/softfloat.c"));
+        build(
+            "clang",
+            &[
+                "--target=riscv32-unknown-linux-gnu", "-march=rv32im", "-mabi=ilp32", "-std=c11", "-O2", "-ffreestanding",
+                "-fno-builtin", "-fno-stack-protector", "-nostdlib", "-static", "-ffp-contract=off", "-fno-jump-tables",
+                "-DNB_HOST", "-Wall", "-Werror", "-Wno-unused-function", "-fuse-ld=lld", "-I", inc.to_str().unwrap(),
+                "-o", exe.to_str().unwrap(), drv.to_str().unwrap(), sf.to_str().unwrap(),
+            ],
+            "RV32 kernel driver",
+        );
+        exe
+    })
+}
+
+/// Is `qemu-riscv32` on PATH?
+pub fn have_qemu_rv32() -> bool {
+    Command::new("qemu-riscv32").arg("--version").output().is_ok_and(|o| o.status.success())
+}
+
 fn driver() -> &'static PathBuf {
     static EXE: OnceLock<PathBuf> = OnceLock::new();
     EXE.get_or_init(|| {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("nb-host-driver-{}", std::process::id()));
         let cc = std::env::var("CC").unwrap_or_else(|_| "clang".into());
-        let out = Command::new(&cc)
-            .args(["-std=c11", "-O1", "-ffp-contract=off", "-DNB_HOST", "-Wall", "-Werror", "-Wno-unused-function"])
-            .arg("-I")
-            .arg(root.join("kernels/include"))
-            .arg(root.join("kernels/host/driver.c"))
-            .arg("-o")
-            .arg(&exe)
-            .arg("-lm")
-            .output()
-            .unwrap_or_else(|e| panic!("cannot run {cc} to build the host kernel driver: {e}"));
-        assert!(out.status.success(), "host driver build failed:\n{}", String::from_utf8_lossy(&out.stderr));
+        let (inc, drv) = (root.join("kernels/include"), root.join("kernels/host/driver.c"));
+        build(
+            &cc,
+            &[
+                "-std=c11", "-O1", "-ffp-contract=off", "-DNB_HOST", "-Wall", "-Werror", "-Wno-unused-function", "-I",
+                inc.to_str().unwrap(), drv.to_str().unwrap(), "-o", exe.to_str().unwrap(), "-lm",
+            ],
+            "host kernel driver",
+        );
         exe
     })
 }
@@ -47,25 +84,37 @@ struct State {
 
 pub struct HostCl {
     features: FeatureSet,
+    rv32: bool,
     state: Mutex<State>,
 }
 
 impl HostCl {
-    pub fn device() -> Device {
+    fn make(name: &str, driver: &str, rv32: bool) -> Device {
         Device::from_backend(Arc::new(HostCl {
             features: FeatureSet {
-                name: "host-cl".into(),
+                name: name.into(),
                 class: DeviceClass::Gpu,
-                driver: "kernels/host/driver.c".into(),
+                driver: driver.into(),
                 engines: vec![(Engine::Matrix, Access::Host)],
                 tiers: vec![Tier::Emulated],
             },
+            rv32,
             state: Mutex::new(State::default()),
         }))
     }
+
+    /// Kernels compiled for the host CPU.
+    pub fn device() -> Device {
+        Self::make("host-cl", "kernels/host/driver.c", false)
+    }
+
+    /// Kernels compiled for the Tensix RISC-V cores (RV32IM + soft-float), under qemu.
+    pub fn rv32() -> Device {
+        Self::make("rv32-qemu", "kernels/tt/qemu_driver.c", true)
+    }
 }
 
-fn run(l: &Launch, mem: &mut HashMap<u64, Vec<u8>>) -> Result<()> {
+fn run(l: &Launch, mem: &mut HashMap<u64, Vec<u8>>, rv32: bool) -> Result<()> {
     let mut input = Vec::new();
     let put = |v: &mut Vec<u8>, x: u32| v.extend_from_slice(&x.to_le_bytes());
     put(&mut input, l.symbol.len() as u32);
@@ -98,7 +147,14 @@ fn run(l: &Launch, mem: &mut HashMap<u64, Vec<u8>>) -> Result<()> {
             _ => return Err(Error::InvalidArgument("unknown arg".into())),
         }
     }
-    let mut child = Command::new(driver()).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)))?;
+    let mut cmd = if rv32 {
+        let mut c = Command::new("qemu-riscv32");
+        c.arg(rv32_driver());
+        c
+    } else {
+        Command::new(driver())
+    };
+    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)))?;
     child.stdin.take().unwrap().write_all(&input).unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "driver failed for {}", l.symbol);
@@ -160,7 +216,7 @@ impl Backend for HostCl {
         let mut s = self.lock();
         let sig = s.kernels[kernel.0 as usize];
         for l in lower(sig, args)? {
-            run(&l, &mut s.mem)?;
+            run(&l, &mut s.mem, self.rv32)?;
         }
         s.next += 1;
         Ok(Fence(s.next))

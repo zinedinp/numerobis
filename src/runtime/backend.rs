@@ -110,7 +110,7 @@ pub trait Backend: Send + Sync + 'static {
 
     /// Copies host bytes into the buffer through internal staging.
     fn upload(&self, id: BufId, offset: usize, src: &[u8]) -> Result<Fence>;
-    /// Starts a device → staging copy of `len` bytes.
+    /// Starts a device -> staging copy of `len` bytes.
     fn download(&self, id: BufId, offset: usize, len: usize) -> Result<Fence>;
     /// After `fence` (from [`download`](Self::download)) has signalled, copies the staged bytes out.
     fn take_download(&self, fence: Fence, dst: &mut [u8]) -> Result<()>;

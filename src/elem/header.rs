@@ -1,5 +1,5 @@
 //! `kernels/include/nb_formats.h`: kernel-side format constants generated
-//! from miraculix, so each definition exists exactly once (plan A.5).
+//! from miraculix, so each definition exists exactly once.
 
 use core::fmt::Write;
 

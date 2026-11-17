@@ -67,10 +67,14 @@ pub fn devices() -> Vec<numerobis::Device> {
     v
 }
 
-/// Devices that run real kernel code (host build plus hardware), compared
-/// against the mock oracle in `tests/emulated.rs`.
+/// Devices that run real kernel code (host build, the Tenstorrent RV32
+/// build under qemu when `qemu-riscv32` is installed, and hardware),
+/// compared against the mock oracle in `tests/emulated.rs`.
 pub fn targets() -> Vec<numerobis::Device> {
     let mut v = vec![hostcl::HostCl::device()];
+    if hostcl::have_qemu_rv32() {
+        v.push(hostcl::HostCl::rv32());
+    }
     v.extend(numerobis::Device::all());
     v
 }

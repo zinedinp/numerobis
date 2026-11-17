@@ -1,4 +1,4 @@
-//! Streams, pending results and the host ↔ device boundary (plan A.4, C.1, C.2).
+//! Streams, pending results and the host <-> device boundary.
 
 use std::cell::Cell;
 use std::marker::PhantomData;
@@ -40,7 +40,7 @@ impl<T> Pending<T> {
         (self.finish)(&*self.backend)
     }
 
-    /// Waits and also returns the device time of the work (plan C.11).
+    /// Waits and also returns the device time of the work.
     pub fn wait_elapsed(self) -> Result<(T, Option<Duration>)> {
         self.backend.wait(self.fence, self.timeout)?;
         let el = self.backend.elapsed(self.fence);
@@ -119,12 +119,12 @@ impl Stream {
         Ok(DeviceBuffer::new(raw, len))
     }
 
-    /// Host → device for byte-aligned formats.
+    /// Host -> device for byte-aligned formats.
     pub fn upload<E: HostRepr>(&mut self, data: &[E::Host]) -> Result<DeviceBuffer<E>> {
         self.upload_packed(data.len(), as_bytes(data))
     }
 
-    /// Host → device from bytes already in device layout (packed sub-byte
+    /// Host -> device from bytes already in device layout (packed sub-byte
     /// formats, block formats; produce them with the miraculix codecs).
     pub fn upload_packed<E: Elem>(&mut self, len: usize, bytes: &[u8]) -> Result<DeviceBuffer<E>> {
         let buf = self.alloc::<E>(len)?;
@@ -136,7 +136,7 @@ impl Stream {
         Ok(buf)
     }
 
-    /// Device → host.
+    /// Device -> host.
     pub fn download<E: Elem>(&mut self, buf: &DeviceBuffer<E>) -> Result<Pending<HostCopy<E>>> {
         self.check_same_device(&buf.raw)?;
         let (bytes, len) = (buf.bytes(), buf.len());

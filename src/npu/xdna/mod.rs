@@ -1,4 +1,4 @@
-//! AMD XDNA / XDNA2 via `amdxdna` (plan B.2b, B.3 step 4).
+//! AMD XDNA / XDNA2 via `amdxdna`.
 
 pub mod tiers;
 

@@ -1,4 +1,4 @@
-//! Intel NPU via `ivpu` (plan B.2b, B.3 step 4).
+//! Intel NPU via `ivpu`.
 
 pub mod tiers;
 

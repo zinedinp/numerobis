@@ -1,4 +1,4 @@
-//! Arm Ethos-U via `ethosu` (plan B.2b, B.3 step 7).
+//! Arm Ethos-U via `ethosu`.
 
 pub mod tiers;
 

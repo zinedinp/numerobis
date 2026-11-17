@@ -1,4 +1,4 @@
-//! Lists devices, engines, tiers and access layers (plan B.5).
+//! Lists devices, engines, tiers and access layers.
 //!
 //! `cargo run --example probe` (add `--features mock` to include the host mock).
 
@@ -11,6 +11,12 @@ fn main() {
     for r in numerobis::nvidia::backend::probe() {
         if let Err(e) = r {
             println!("nvidia: {e}");
+        }
+    }
+    #[cfg(feature = "tt")]
+    for r in numerobis::tt::backend::probe() {
+        if let Err(e) = r {
+            println!("tt: {e}");
         }
     }
     #[cfg(feature = "mock")]
