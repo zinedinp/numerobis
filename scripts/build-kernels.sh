@@ -40,7 +40,9 @@ done
 if command -v "$PTXAS" >/dev/null; then
     for a in "${NV_ARCHS[@]}"; do
         ptx="$out/nvidia/$a-emulated.ptx"
-        "$CLANG" "${common[@]}" -target nvptx64-nvidia-cuda -march="$a" -S "$src" -o "$ptx"
+        # No jump tables: they become .nv.global.init data plus a .nv.constant4
+        # relocation, which the raw loader would have to link.
+        "$CLANG" "${common[@]}" -fno-jump-tables -target nvptx64-nvidia-cuda -march="$a" -S "$src" -o "$ptx"
         "$PTXAS" -arch="$a" "$ptx" -o "$out/nvidia/$a-emulated.cubin"
         rm "$ptx"
     done

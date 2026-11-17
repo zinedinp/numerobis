@@ -51,9 +51,14 @@ impl Device {
 
     /// Every device the compiled-in backends can open.
     ///
-    /// Raw backends are added here as their B.3 steps land; for now the list is empty.
+    /// Raw backends are added here as their B.3 steps land (features
+    /// `nvidia`, `tt`). Devices that fail to open are skipped.
     pub fn all() -> Vec<Device> {
-        Vec::new()
+        #[allow(unused_mut)]
+        let mut v = Vec::new();
+        #[cfg(all(feature = "nvidia", target_os = "linux"))]
+        v.extend(crate::nvidia::backend::open_all());
+        v
     }
 
     pub fn open(placement: Placement) -> Result<Device> {

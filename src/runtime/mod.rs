@@ -6,6 +6,9 @@ pub mod backend;
 pub(crate) mod buffer;
 pub(crate) mod device;
 pub(crate) mod error;
+#[cfg(target_os = "linux")]
+#[allow(dead_code)]
+pub(crate) mod os;
 pub(crate) mod stream;
 
 pub use backend::{Arg, Backend, BufId, Fence, KernelId, KernelKey, OpSig};

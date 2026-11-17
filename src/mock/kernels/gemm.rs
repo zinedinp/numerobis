@@ -1,17 +1,9 @@
-use miraculix::formats::{MiniFloat, Overflow};
+use miraculix::formats::Overflow;
 
 use super::{Mem, get, put, u};
 use crate::elem::Format;
 use crate::mock::codec::{self, int};
 use crate::runtime::backend::Arg;
-
-pub(super) fn supported(a: Format, b: Format, acc: Format) -> bool {
-    match acc {
-        Format::I32 => a.is_integer() && b.is_integer(),
-        Format::F32 | Format::Float(MiniFloat::F16) => !a.is_integer() && !b.is_integer(),
-        _ => false,
-    }
-}
 
 /// Emulated tier: decode, then one sequential F32 FMA chain per output
 /// (wrapping `i32` for integer inputs).

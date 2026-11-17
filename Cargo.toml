@@ -1,6 +1,6 @@
 [package]
 name = "numerobis"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Zinedin Polic"]
 edition = "2024"
 rust-version = "1.100.0"
@@ -28,7 +28,7 @@ mock = []
 
 [dependencies]
 miraculix = { version = "=0.5.4-beta", default-features = false }
-# libc joins with the first raw backend (intel, B.3 step 3).
+libc = "0.2.191"
 
 [dev-dependencies]
 # Turns the mock backend on for integration tests and doctests.

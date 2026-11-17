@@ -58,8 +58,19 @@ pub fn block_to_host<E: BlockElem>(s: &mut Stream, b: &DeviceBuffer<E>) -> Vec<f
 
 pub mod hostcl;
 
-/// Every device the suite runs on: the mock oracle and the real Emulated
-/// kernels compiled for the host.
+/// Every device the suite runs on: the mock oracle, the real Emulated
+/// kernels compiled for the host, and every raw hardware device of the
+/// enabled backend features (`--features nvidia`, ...).
 pub fn devices() -> Vec<numerobis::Device> {
-    vec![numerobis::Device::mock(), hostcl::HostCl::device()]
+    let mut v = vec![numerobis::Device::mock()];
+    v.extend(targets());
+    v
+}
+
+/// Devices that run real kernel code (host build plus hardware), compared
+/// against the mock oracle in `tests/emulated.rs`.
+pub fn targets() -> Vec<numerobis::Device> {
+    let mut v = vec![hostcl::HostCl::device()];
+    v.extend(numerobis::Device::all());
+    v
 }

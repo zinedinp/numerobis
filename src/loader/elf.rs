@@ -30,6 +30,12 @@ pub struct Section<'a> {
     pub addr: u64,
     pub data: &'a [u8],
     pub link: u32,
+    /// `sh_info` (cubin `.text.*`: register count in bits 24..32).
+    pub info: u32,
+    /// File offset of the section data.
+    pub offset: u64,
+    /// `sh_size` (also for `SHT_NOBITS`, whose `data` is empty).
+    pub size: u64,
     pub entsize: u64,
 }
 
@@ -51,8 +57,8 @@ pub struct Elf<'a> {
     pub sections: Vec<Section<'a>>,
 }
 
-/// `(sh_name, sh_type, sh_flags, sh_addr, data, sh_link, sh_entsize)`.
-type Shdr<'a> = (u32, u32, u64, u64, &'a [u8], u32, u64);
+/// `(sh_name, sh_type, sh_flags, sh_addr, data, sh_link, sh_info, sh_offset, sh_size, sh_entsize)`.
+type Shdr<'a> = (u32, u32, u64, u64, &'a [u8], u32, u32, u64, u64, u64);
 
 fn bad(msg: &str) -> Error {
     Error::BadBinary(msg.into())
@@ -106,13 +112,13 @@ impl<'a> Elf<'a> {
             let (off, size) = (usize_of(u64_at(b, h + 24)?)?, usize_of(u64_at(b, h + 32)?)?);
             // SHT_NOBITS (.bss) has no file data.
             let data = if kind == 8 { &b[..0] } else { b.get(off..off.checked_add(size).ok_or_else(|| bad("overflow"))?).ok_or_else(|| bad("section out of range"))? };
-            Ok((u32_at(b, h)?, kind, u64_at(b, h + 8)?, u64_at(b, h + 16)?, data, u32_at(b, h + 40)?, u64_at(b, h + 56)?))
+            Ok((u32_at(b, h)?, kind, u64_at(b, h + 8)?, u64_at(b, h + 16)?, data, u32_at(b, h + 40)?, u32_at(b, h + 44)?, off as u64, size as u64, u64_at(b, h + 56)?))
         };
         let strtab = hdr(shstrndx)?.4;
         let mut sections = Vec::with_capacity(shnum);
         for i in 0..shnum {
-            let (name, kind, flags, addr, data, link, entsize) = hdr(i)?;
-            sections.push(Section { name: cstr(strtab, name as usize)?, kind, flags, addr, data, link, entsize });
+            let (name, kind, flags, addr, data, link, info, offset, size, entsize) = hdr(i)?;
+            sections.push(Section { name: cstr(strtab, name as usize)?, kind, flags, addr, data, link, info, offset, size, entsize });
         }
         Ok(Elf { machine, flags, sections })
     }

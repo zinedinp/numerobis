@@ -3,10 +3,6 @@ use crate::elem::{Format, as_bytes};
 use crate::mock::codec::block;
 use crate::runtime::backend::Arg;
 
-pub(super) fn encodable(to: Format) -> bool {
-    matches!(to, Format::Mx(_) | Format::Nvfp4 | Format::Bfp(_))
-}
-
 pub(super) fn quantize(mem: &mut Mem, to: Format, a: &[Arg]) -> Option<()> {
     let len = u(a, 2)?;
     let x: Vec<f32> = crate::elem::from_bytes(&get(mem, a, 0)?);

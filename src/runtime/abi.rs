@@ -35,6 +35,26 @@ pub const SYMBOLS: [&str; 8] = [
     "nb_absmax_block",
 ];
 
+/// Which signatures the shared Emulated kernels implement (every SIMT
+/// backend's `supports` for [`Tier::Emulated`](crate::Tier::Emulated); the mock
+/// oracle covers the same set).
+pub fn supported(sig: OpSig) -> bool {
+    use miraculix::formats::MiniFloat;
+    match sig {
+        OpSig::Convert { from, to } => from == Format::F32 || to == Format::F32,
+        OpSig::Quantize { to } => matches!(to, Format::Mx(_) | Format::Nvfp4 | Format::Bfp(_)),
+        OpSig::Dequantize { .. } | OpSig::Pack { .. } | OpSig::Unpack { .. } => true,
+        OpSig::Gemm { a, b, acc } => match acc {
+            Format::I32 => a.is_integer() && b.is_integer(),
+            Format::F32 | Format::Float(MiniFloat::F16) => !a.is_integer() && !b.is_integer(),
+            _ => false,
+        },
+        OpSig::AbsmaxBlock { src } => !src.is_integer(),
+        #[allow(unreachable_patterns)]
+        _ => false,
+    }
+}
+
 fn bad(sig: OpSig) -> Error {
     Error::InvalidArgument(format!("bad arguments for {}", sig.name(false)))
 }

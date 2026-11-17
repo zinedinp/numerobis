@@ -1,10 +1,10 @@
-//! The real Emulated kernels (`kernels/src`, host build) must match the mock
-//! oracle bit for bit on random inputs, for every format and op. F32 outputs
-//! compare NaN == NaN (FP16 decode NaN payloads are host-dependent in miraculix).
+//! The real Emulated kernels (`kernels/src`: host build, plus every hardware
+//! device of the enabled backend features) must match the mock oracle bit for
+//! bit on random inputs, for every format and op. F32 outputs compare NaN ==
+//! NaN (FP16 decode NaN payloads are host-dependent in miraculix).
 
 mod common;
 
-use common::hostcl::HostCl;
 use common::*;
 use numerobis::elem::*;
 use numerobis::{Choice, Device, DeviceBuffer, GemmShape, Overflow, Stream, ops};
@@ -16,16 +16,20 @@ fn agree<E: Elem>(what: &str, f: impl Fn(&mut Stream) -> DeviceBuffer<E>) {
         let out = f(&mut s);
         bytes(&mut s, &out)
     };
-    let (want, got) = (run(Device::mock()), run(HostCl::device()));
-    assert_eq!(want.len(), got.len(), "{what}");
-    if E::FORMAT == F32::FORMAT {
-        for (i, (w, g)) in want.chunks(4).zip(got.chunks(4)).enumerate() {
-            let (w, g) = (f32::from_le_bytes(w.try_into().unwrap()), f32::from_le_bytes(g.try_into().unwrap()));
-            assert!(same(w, g), "{what}: element {i}: mock {w} ({:#x}), kernel {g} ({:#x})", w.to_bits(), g.to_bits());
-        }
-    } else {
-        for (i, (w, g)) in want.iter().zip(&got).enumerate() {
-            assert_eq!(w, g, "{what}: byte {i}");
+    let want = run(Device::mock());
+    for dev in targets() {
+        let on = &dev.features().name;
+        let got = run(dev.clone());
+        assert_eq!(want.len(), got.len(), "{what} on {on}");
+        if E::FORMAT == F32::FORMAT {
+            for (i, (w, g)) in want.chunks(4).zip(got.chunks(4)).enumerate() {
+                let (w, g) = (f32::from_le_bytes(w.try_into().unwrap()), f32::from_le_bytes(g.try_into().unwrap()));
+                assert!(same(w, g), "{what} on {on}: element {i}: mock {w} ({:#x}), kernel {g} ({:#x})", w.to_bits(), g.to_bits());
+            }
+        } else {
+            for (i, (w, g)) in want.iter().zip(&got).enumerate() {
+                assert_eq!(w, g, "{what} on {on}: byte {i}");
+            }
         }
     }
 }

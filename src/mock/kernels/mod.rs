@@ -16,15 +16,7 @@ use crate::runtime::error::{Error, Result};
 pub(super) type Mem = HashMap<u64, Vec<u8>>;
 
 pub(super) fn supported(sig: OpSig) -> bool {
-    match sig {
-        OpSig::Convert { from, to } => convert::supported(from, to),
-        OpSig::Quantize { to } => quantize::encodable(to),
-        OpSig::Dequantize { .. } | OpSig::Pack { .. } | OpSig::Unpack { .. } => true,
-        OpSig::Gemm { a, b, acc } => gemm::supported(a, b, acc),
-        OpSig::AbsmaxBlock { src } => !src.is_integer(),
-        #[allow(unreachable_patterns)]
-        _ => false,
-    }
+    crate::runtime::abi::supported(sig)
 }
 
 pub(super) fn run(mem: &mut Mem, sig: OpSig, args: &[Arg]) -> Result<()> {

@@ -34,6 +34,11 @@ fn placement_low_power_prefers_npu() {
 }
 
 #[test]
-fn open_without_backends_reports_no_device() {
-    assert!(matches!(Device::open(Placement::Fastest), Err(numerobis::Error::NoDevice)));
+fn open_reports_no_device_only_without_hardware() {
+    let r = Device::open(Placement::Fastest);
+    if Device::all().is_empty() {
+        assert!(matches!(r, Err(numerobis::Error::NoDevice)));
+    } else {
+        assert_eq!(r.unwrap().features().class, DeviceClass::Gpu);
+    }
 }
