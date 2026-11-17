@@ -1,0 +1,24 @@
+//! Lists devices, engines, tiers and access layers (plan B.5).
+//!
+//! `cargo run --example probe` (add `--features mock` to include the host mock).
+
+use numerobis::Device;
+
+fn main() {
+    #[allow(unused_mut)]
+    let mut devices = Device::all();
+    #[cfg(feature = "mock")]
+    devices.push(Device::mock());
+    if devices.is_empty() {
+        println!("no devices (no raw backend is implemented yet; try --features mock)");
+    }
+    for (i, d) in devices.iter().enumerate() {
+        let f = d.features();
+        println!("[{i}] {} ({:?}, driver {})", f.name, f.class, f.driver);
+        for (e, a) in &f.engines {
+            println!("    engine {e:?}: {a:?}");
+        }
+        let tiers: Vec<String> = f.tiers.iter().map(|t| t.name()).collect();
+        println!("    tiers: {}", tiers.join(" < "));
+    }
+}

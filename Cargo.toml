@@ -1,0 +1,37 @@
+[package]
+name = "numerobis"
+version = "0.1.0"
+authors = ["Zinedin Polic"]
+edition = "2024"
+rust-version = "1.100.0"
+description = "Raw accelerator computing (GPU matrix engines, NPUs) on top of miraculix formats"
+license = "MIT OR Apache-2.0"
+categories = ["hardware-support"]
+
+[features]
+default = []
+# Raw backends (kernel UAPI only, libc). Declared now so the module layout
+# is fixed
+intel = []
+amd = []
+nvidia = []
+tt = []
+xdna = []
+v3d = []
+accel = []
+# Comfort backends.
+vulkan = []
+cuda = []
+hip = []
+# Test-only backend: runs the Emulated semantics in Rust on the host.
+mock = []
+
+[dependencies]
+# Pinned (plan C.12); a CI job against miraculix main catches format changes early.
+miraculix = { version = "=0.5.4-beta", default-features = false }
+# libc joins with the first raw backend (intel, B.3 step 3).
+
+[dev-dependencies]
+# Turns the mock backend on for integration tests and doctests.
+numerobis = { path = ".", features = ["mock"] }
+
