@@ -79,6 +79,23 @@
 #define NB_BF16_MAX_CODE 0x7F7Fu
 #define NB_BF16_SPECIAL NB_SPECIAL_IEEE
 
+#define NB_KIND_F32 0u
+#define NB_KIND_TF32 1u
+#define NB_KIND_I32 2u
+#define NB_KIND_I8 3u
+#define NB_KIND_U8 4u
+#define NB_KIND_FLOAT 5u
+#define NB_KIND_INT 6u
+#define NB_KIND_MX 7u
+#define NB_KIND_NVFP4 8u
+#define NB_KIND_BFP 9u
+#define NB_KIND_Q8_0 10u
+#define NB_KIND_Q6_K 11u
+
+#define NB_DESC_E4M3FN 0x107345u
+#define NB_DESC_E2M1 0x301125u
+#define NB_DESC_F16 0xFA55u
+
 #define NB_MX_BLOCK 32
 #define NB_NVFP4_BLOCK 16
 #define NB_BFP_ROW 16

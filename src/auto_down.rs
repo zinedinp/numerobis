@@ -2,8 +2,8 @@
 //! turn (test matrices, benchmarks). Pass the result to
 //! [`Choice::Down`](crate::Choice::Down).
 
-use crate::backend::{KernelKey, OpSig};
-use crate::device::Device;
+use crate::runtime::backend::{KernelKey, OpSig};
+use crate::runtime::Device;
 use crate::tiers::Tier;
 
 /// All tiers of the device that support `sig`, ascending.

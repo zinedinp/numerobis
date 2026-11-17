@@ -1,9 +1,11 @@
+//! Matrix multiply.
+
 use super::{Choice, key, len_u32};
-use crate::backend::{Arg, OpSig};
-use crate::buffer::DeviceBuffer;
+use crate::runtime::backend::{Arg, OpSig};
+use crate::runtime::DeviceBuffer;
 use crate::elem::{Acc, Elem};
-use crate::error::{Result, invalid};
-use crate::stream::{Pending, Stream};
+use crate::runtime::error::{Result, invalid};
+use crate::runtime::{Pending, Stream};
 
 /// GEMM problem size. `batch > 1` selects the strided-batched kernel; batches
 /// are stored back to back.
@@ -25,10 +27,10 @@ impl GemmShape {
     }
 }
 
-/// `gemm_<a>_<b>_<acc>`: `C = alpha·A·Bᵀ + beta·C`.
+/// `gemm_<a>_<b>_<acc>`: `C = alpha*A*B^T + beta*C`.
 ///
-/// Layout: A is `M×K`, **B is `N×K`** (both K-contiguous, as block-scaled
-/// formats need the blocks along K), C is `M×N`, all row-major. For block
+/// Layout: A is `MxK`, **B is `NxK`** (both K-contiguous, as block-scaled
+/// formats need the blocks along K), C is `MxN`, all row-major. For block
 /// formats `K` must be a multiple of the block size. With `beta == 0`, C is
 /// not read (NaNs in C do not propagate).
 ///
@@ -51,7 +53,7 @@ pub fn gemm<A: Elem, B: Elem, C: Acc>(
     }
     if a.len() != batch * m * k || b.len() != batch * n * k || c.len() != batch * m * n {
         return Err(invalid(format!(
-            "gemm {batch}×({m}×{k})·({n}×{k})ᵀ: got A {}, B {}, C {} elements",
+            "gemm {batch}x({m}x{k})*({n}x{k})^T: got A {}, B {}, C {} elements",
             a.len(),
             b.len(),
             c.len()

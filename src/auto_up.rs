@@ -1,8 +1,8 @@
 //! `auto_up`: run every op on the best tier the device has a kernel for.
 
-use crate::backend::{KernelKey, OpSig};
-use crate::device::Device;
-use crate::error::{Error, Result};
+use crate::runtime::backend::{KernelKey, OpSig};
+use crate::runtime::Device;
+use crate::runtime::error::{Error, Result};
 use crate::tiers::Tier;
 
 /// Highest tier in the device's ladder that supports `sig`.

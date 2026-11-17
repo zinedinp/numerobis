@@ -2,7 +2,7 @@
 //! cubin, Intel Gen ELF (ocloc), RISC-V ELF (Tenstorrent). Only parses what a
 //! loader needs (sections, symbols, notes); never executes or relocates.
 
-use crate::error::{Error, Result};
+use crate::runtime::error::{Error, Result};
 
 /// `e_machine` values of the targets numerobis loads.
 pub mod machine {

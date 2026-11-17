@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::backend::{Backend, KernelId, KernelKey};
+use crate::runtime::backend::{Backend, KernelId, KernelKey};
 use crate::engine::{DeviceClass, Engine, FeatureSet};
-use crate::error::{Error, Result};
-use crate::stream::Stream;
+use crate::runtime::error::{Error, Result};
+use crate::runtime::stream::Stream;
 
 /// Where work should run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

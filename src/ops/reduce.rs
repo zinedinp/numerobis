@@ -1,9 +1,11 @@
+//! Reductions (stage 1: only the per-block absmax for MX/NVFP4 scales).
+
 use super::{Choice, key, len_u32};
-use crate::backend::{Arg, OpSig};
-use crate::buffer::DeviceBuffer;
+use crate::runtime::backend::{Arg, OpSig};
+use crate::runtime::DeviceBuffer;
 use crate::elem::{Elem, F32};
-use crate::error::{Result, invalid};
-use crate::stream::{Pending, Stream};
+use crate::runtime::error::{Result, invalid};
+use crate::runtime::{Pending, Stream};
 
 /// `absmax_block_<src>`: `dst[i] = max |src[i·block .. (i+1)·block]|`, the scale
 /// input for MX / NVFP4 quantization. NaN inputs are ignored. The only

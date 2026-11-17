@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::elem::Format;
 use crate::engine::FeatureSet;
-use crate::error::Result;
+use crate::runtime::error::Result;
 use crate::tiers::Tier;
 
 /// Backend-local buffer handle (GEM handle, KFD BO, …).
@@ -24,11 +24,19 @@ pub struct Fence(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum OpSig {
-    /// Element-wise convert, quantize or dequantize.
+    /// Float -> float, element for element.
     /// Args: `[src, dst, len: U32, overflow: U32 (0 saturate, 1 special)]`.
     Convert { from: Format, to: Format },
-    /// `C = alpha·A·Bᵀ + beta·C`, batched. A is `M×K`, B is `N×K` (both K-contiguous),
-    /// C is `M×N`, batches back to back.
+    /// `F32` -> block format. Args: `[src, dst, len: U32]`.
+    Quantize { to: Format },
+    /// Block format -> `F32`. Args: `[src, dst, len: U32]`.
+    Dequantize { from: Format },
+    /// `I8`/`U8` -> packed sub-byte integer, saturating. Args: `[src, dst, len: U32]`.
+    Pack { to: Format },
+    /// Packed sub-byte integer -> `I8`/`U8`. Args: `[src, dst, len: U32]`.
+    Unpack { from: Format },
+    /// `C = alpha*A*B^T + beta*C`, batched. A is `MxK`, B is `NxK` (both K-contiguous),
+    /// C is `MxN`, batches back to back.
     /// Args: `[a, b, c, m, n, k, batch: U32, alpha, beta]`.
     Gemm { a: Format, b: Format, acc: Format },
     /// Per-block max of `|x|`. Args: `[src, dst, len: U32, block: U32]`.
@@ -47,13 +55,11 @@ impl OpSig {
     /// Kernel name following the miraculix `<op>_<type>` convention.
     pub fn name(&self, batched: bool) -> String {
         match *self {
-            OpSig::Convert { from, to } if to.is_block_scaled() => {
-                format!("quantize_{}_{}", from.name(), to.name())
-            }
-            OpSig::Convert { from, to } if from.is_block_scaled() => {
-                format!("dequantize_{}_{}", from.name(), to.name())
-            }
             OpSig::Convert { from, to } => format!("convert_{}_{}", from.name(), to.name()),
+            OpSig::Quantize { to } => format!("quantize_{}", to.name()),
+            OpSig::Dequantize { from } => format!("dequantize_{}", from.name()),
+            OpSig::Pack { to } => format!("pack_{}", to.name()),
+            OpSig::Unpack { from } => format!("unpack_{}", from.name()),
             OpSig::Gemm { a, b, acc } => {
                 let p = if batched { "gemm_strided" } else { "gemm" };
                 format!("{p}_{}_{}_{}", a.name(), b.name(), acc.name())

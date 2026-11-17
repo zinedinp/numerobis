@@ -1,28 +1,35 @@
 //! Mock backend (feature `mock`, tests only): runs the Emulated semantics on
 //! the host with the miraculix codecs, synchronously. It is the oracle for
-//! every real tier (plan B.3.1, B.5).
+//! every real tier (plan B.3 step 1, B.5).
+//!
+//! [`codec`] is split by format kind, [`kernels`] by op kind.
 
 pub mod codec;
+mod kernels;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use miraculix::formats::{MiniFloat, Overflow};
-
-use crate::backend::{Arg, Backend, BufId, Fence, KernelId, KernelKey, OpSig};
-use crate::elem::Format;
 use crate::engine::{Access, DeviceClass, Engine, FeatureSet};
-use crate::error::{Error, Result};
+use crate::runtime::backend::{Arg, Backend, BufId, Fence, KernelId, KernelKey, OpSig};
+use crate::runtime::error::{Error, Result};
 use crate::tiers::Tier;
 
 #[derive(Default)]
 struct State {
     next: u64,
-    bufs: HashMap<u64, Vec<u8>>,
+    mem: kernels::Mem,
     kernels: Vec<OpSig>,
     downloads: HashMap<u64, Vec<u8>>,
     elapsed: HashMap<u64, Duration>,
+}
+
+impl State {
+    fn fence(&mut self) -> Fence {
+        self.next += 1;
+        Fence(self.next)
+    }
 }
 
 /// Host-emulated device.
@@ -60,121 +67,13 @@ impl MockBackend {
     }
 }
 
-fn sig_supported(sig: OpSig) -> bool {
-    match sig {
-        OpSig::Convert { from, to } => codec::convert_supported(from, to),
-        OpSig::Gemm { a, b, acc } => {
-            let float_in = |f: Format| !f.is_integer();
-            match acc {
-                Format::I32 => a.is_integer() && b.is_integer(),
-                Format::F32 | Format::Float(MiniFloat::F16) => float_in(a) && float_in(b),
-                _ => false,
-            }
-        }
-        OpSig::AbsmaxBlock { src } => !src.is_integer(),
-        #[allow(unreachable_patterns)]
-        _ => false,
-    }
+/// Is `sig` a stage-1 op of the Emulated tier? Shared with test backends.
+pub fn supported(sig: OpSig) -> bool {
+    kernels::supported(sig)
 }
 
-fn buf(a: &Arg) -> Result<u64> {
-    match a {
-        Arg::Buf(b) => Ok(b.0),
-        _ => Err(Error::InvalidArgument("expected buffer arg".into())),
-    }
-}
-fn u(a: &Arg) -> Result<usize> {
-    match a {
-        Arg::U32(v) => Ok(*v as usize),
-        _ => Err(Error::InvalidArgument("expected u32 arg".into())),
-    }
-}
-
-impl State {
-    fn get(&self, id: u64) -> Result<&Vec<u8>> {
-        self.bufs.get(&id).ok_or(Error::InvalidArgument(format!("unknown buffer {id}")))
-    }
-
-    fn fence(&mut self) -> Fence {
-        self.next += 1;
-        Fence(self.next)
-    }
-
-    fn run(&mut self, sig: OpSig, args: &[Arg]) -> Result<()> {
-        let bad = || Error::Unsupported(format!("mock: {sig:?}"));
-        match sig {
-            OpSig::Convert { from, to } => {
-                let (src, dst, len) = (buf(&args[0])?, buf(&args[1])?, u(&args[2])?);
-                let ov = if u(&args[3])? == 0 { Overflow::Saturate } else { Overflow::Special };
-                let out = codec::convert(from, to, self.get(src)?, len, ov).ok_or_else(bad)?;
-                self.bufs.insert(dst, out);
-            }
-            OpSig::AbsmaxBlock { src } => {
-                let (s, d, len, block) = (buf(&args[0])?, buf(&args[1])?, u(&args[2])?, u(&args[3])?);
-                let x = codec::decode_f32(src, self.get(s)?, len).ok_or_else(bad)?;
-                let m: Vec<f32> =
-                    x.chunks_exact(block).map(|c| c.iter().fold(0.0f32, |m, v| if v.abs() > m { v.abs() } else { m })).collect();
-                self.bufs.insert(d, crate::elem::as_bytes(&m).to_vec());
-            }
-            OpSig::Gemm { a, b, acc } => {
-                let (ia, ib, ic) = (buf(&args[0])?, buf(&args[1])?, buf(&args[2])?);
-                let (m, n, k, batch) = (u(&args[3])?, u(&args[4])?, u(&args[5])?, u(&args[6])?);
-                let out = if acc == Format::I32 {
-                    let (Arg::I32(alpha), Arg::I32(beta)) = (args[7], args[8]) else { return Err(bad()) };
-                    let av = codec::decode_i32(a, self.get(ia)?, batch * m * k).ok_or_else(bad)?;
-                    let bv = codec::decode_i32(b, self.get(ib)?, batch * n * k).ok_or_else(bad)?;
-                    let cv = codec::decode_i32(acc, self.get(ic)?, batch * m * n).ok_or_else(bad)?;
-                    let mut c = vec![0i32; batch * m * n];
-                    for (((cb, ab), bb), cold) in
-                        c.chunks_exact_mut(m * n).zip(av.chunks_exact(m * k)).zip(bv.chunks_exact(n * k)).zip(cv.chunks_exact(m * n))
-                    {
-                        for i in 0..m {
-                            for j in 0..n {
-                                let mut s = 0i32;
-                                for p in 0..k {
-                                    s = s.wrapping_add(ab[i * k + p].wrapping_mul(bb[j * k + p]));
-                                }
-                                let mut r = alpha.wrapping_mul(s);
-                                if beta != 0 {
-                                    r = r.wrapping_add(beta.wrapping_mul(cold[i * n + j]));
-                                }
-                                cb[i * n + j] = r;
-                            }
-                        }
-                    }
-                    codec::encode_i32(acc, &c).ok_or_else(bad)?
-                } else {
-                    let (Arg::F32(alpha), Arg::F32(beta)) = (args[7], args[8]) else { return Err(bad()) };
-                    let av = codec::decode_f32(a, self.get(ia)?, batch * m * k).ok_or_else(bad)?;
-                    let bv = codec::decode_f32(b, self.get(ib)?, batch * n * k).ok_or_else(bad)?;
-                    let cv = if beta != 0.0 {
-                        codec::decode_f32(acc, self.get(ic)?, batch * m * n).ok_or_else(bad)?
-                    } else {
-                        vec![0.0; batch * m * n]
-                    };
-                    let mut c = vec![0f32; batch * m * n];
-                    for (((cb, ab), bb), cold) in
-                        c.chunks_exact_mut(m * n).zip(av.chunks_exact(m * k)).zip(bv.chunks_exact(n * k)).zip(cv.chunks_exact(m * n))
-                    {
-                        for i in 0..m {
-                            for j in 0..n {
-                                let mut s = 0f32;
-                                for p in 0..k {
-                                    s = ab[i * k + p].mul_add(bb[j * k + p], s);
-                                }
-                                cb[i * n + j] = if beta != 0.0 { alpha * s + beta * cold[i * n + j] } else { alpha * s };
-                            }
-                        }
-                    }
-                    codec::encode_f32(acc, &c, Overflow::Special).ok_or_else(bad)?
-                };
-                self.bufs.insert(ic, out);
-            }
-            #[allow(unreachable_patterns)]
-            _ => return Err(bad()),
-        }
-        Ok(())
-    }
+fn invalid(msg: &str) -> Error {
+    Error::InvalidArgument(msg.into())
 }
 
 impl Backend for MockBackend {
@@ -186,37 +85,38 @@ impl Backend for MockBackend {
         let mut s = self.lock();
         s.next += 1;
         let id = s.next;
-        s.bufs.insert(id, vec![0; bytes]);
+        s.mem.insert(id, vec![0; bytes]);
         Ok(BufId(id))
     }
 
     fn free(&self, id: BufId) {
-        self.lock().bufs.remove(&id.0);
+        self.lock().mem.remove(&id.0);
     }
 
     fn upload(&self, id: BufId, offset: usize, src: &[u8]) -> Result<Fence> {
         let mut s = self.lock();
-        let b = s.bufs.get_mut(&id.0).ok_or(Error::InvalidArgument("unknown buffer".into()))?;
-        b.get_mut(offset..offset + src.len()).ok_or(Error::InvalidArgument("upload out of range".into()))?.copy_from_slice(src);
+        let b = s.mem.get_mut(&id.0).ok_or_else(|| invalid("unknown buffer"))?;
+        b.get_mut(offset..offset + src.len()).ok_or_else(|| invalid("upload out of range"))?.copy_from_slice(src);
         Ok(s.fence())
     }
 
     fn download(&self, id: BufId, offset: usize, len: usize) -> Result<Fence> {
         let mut s = self.lock();
-        let data = s.get(id.0)?.get(offset..offset + len).ok_or(Error::InvalidArgument("download out of range".into()))?.to_vec();
+        let b = s.mem.get(&id.0).ok_or_else(|| invalid("unknown buffer"))?;
+        let data = b.get(offset..offset + len).ok_or_else(|| invalid("download out of range"))?.to_vec();
         let f = s.fence();
         s.downloads.insert(f.0, data);
         Ok(f)
     }
 
     fn take_download(&self, fence: Fence, dst: &mut [u8]) -> Result<()> {
-        let data = self.lock().downloads.remove(&fence.0).ok_or(Error::InvalidArgument("no such download".into()))?;
+        let data = self.lock().downloads.remove(&fence.0).ok_or_else(|| invalid("no such download"))?;
         dst.copy_from_slice(&data);
         Ok(())
     }
 
     fn supports(&self, key: &KernelKey) -> bool {
-        self.kernel_tiers.contains(&key.tier) && self.features.tiers.contains(&key.tier) && sig_supported(key.sig)
+        self.kernel_tiers.contains(&key.tier) && self.features.tiers.contains(&key.tier) && kernels::supported(key.sig)
     }
 
     fn load_kernel(&self, key: &KernelKey) -> Result<KernelId> {
@@ -230,9 +130,9 @@ impl Backend for MockBackend {
 
     fn dispatch(&self, kernel: KernelId, args: &[Arg]) -> Result<Fence> {
         let mut s = self.lock();
-        let sig = *s.kernels.get(kernel.0 as usize).ok_or(Error::InvalidArgument("unknown kernel".into()))?;
+        let sig = *s.kernels.get(kernel.0 as usize).ok_or_else(|| invalid("unknown kernel"))?;
         let t = Instant::now();
-        s.run(sig, args)?;
+        kernels::run(&mut s.mem, sig, args)?;
         let f = s.fence();
         s.elapsed.insert(f.0, t.elapsed());
         Ok(f)

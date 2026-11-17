@@ -1,6 +1,6 @@
 [package]
 name = "numerobis"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Zinedin Polic"]
 edition = "2024"
 rust-version = "1.100.0"
@@ -27,7 +27,6 @@ hip = []
 mock = []
 
 [dependencies]
-# Pinned (plan C.12); a CI job against miraculix main catches format changes early.
 miraculix = { version = "=0.5.4-beta", default-features = false }
 # libc joins with the first raw backend (intel, B.3 step 3).
 

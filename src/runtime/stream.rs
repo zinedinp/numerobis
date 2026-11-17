@@ -5,11 +5,11 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::backend::{Arg, Backend, Fence, KernelKey};
-use crate::buffer::{DeviceBuffer, HostCopy, RawBuffer};
-use crate::device::Device;
+use crate::runtime::backend::{Arg, Backend, Fence, KernelKey};
+use crate::runtime::buffer::{DeviceBuffer, HostCopy, RawBuffer};
+use crate::runtime::device::Device;
 use crate::elem::{Elem, HostRepr, as_bytes};
-use crate::error::{Result, invalid};
+use crate::runtime::error::{Result, invalid};
 
 /// Default timeout for waits that do not name one.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);

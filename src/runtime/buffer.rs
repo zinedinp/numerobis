@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::backend::{Backend, BufId};
+use crate::runtime::backend::{Backend, BufId};
 use crate::elem::{Elem, Format, HostRepr, from_bytes};
 
 /// Owner of one backend allocation. Freed when the last `Arc` drops; streams
