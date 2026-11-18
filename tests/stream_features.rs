@@ -12,6 +12,7 @@ use numerobis::engine::DeviceClass;
 use numerobis::mock::MockBackend;
 use numerobis::ops::{self, Act, Conv2dShape};
 use numerobis::{Bind, Choice, Device, Exactness, GemmShape, Tier};
+use std::os::fd::AsFd as _;
 
 /// A device whose top tier is a vendor matrix tier (not bit-exact for GEMM).
 fn vendor_device() -> Device {
@@ -255,5 +256,58 @@ fn timeline_and_sync_file_interop() {
             .unwrap()
             .signal_timeline(&tl, 1)
             .is_err()
+    );
+}
+
+#[test]
+fn host_dmabuf_api() {
+    use numerobis::dmabuf::{self, HostDmabuf};
+    use std::os::fd::AsFd;
+    let h = HostDmabuf::new(4096 + 8).unwrap();
+    assert_eq!(h.len(), 4104);
+    h.write(4096, &[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+    // A second mapping of the same memory (as another process or API would see it).
+    let fd = h.try_clone_fd().unwrap();
+    assert!(dmabuf::size(fd.as_fd()).unwrap() >= 4104);
+    let other = HostDmabuf::map(fd.as_fd(), 4104).unwrap();
+    assert_eq!(other.is_dmabuf(), h.is_dmabuf());
+    let mut b = [0u8; 8];
+    other.read(4096, &mut b).unwrap();
+    assert_eq!(b, [1, 2, 3, 4, 5, 6, 7, 8]);
+    // Out of range is an error, not a panic; too-large maps are refused.
+    assert!(h.read(4100, &mut b).is_err());
+    assert!(HostDmabuf::map(fd.as_fd(), 1 << 30).is_err());
+    // PRIME on something that is not a DRM device fails cleanly.
+    assert!(dmabuf::prime_import(fd.as_fd(), fd.as_fd()).is_err());
+    assert!(dmabuf::prime_export(fd.as_fd(), 1).is_err());
+}
+
+#[test]
+fn host_dmabuf_into_device_without_copy() {
+    use numerobis::dmabuf::HostDmabuf;
+    let frame = HostDmabuf::new(16).unwrap();
+    let vals: Vec<u8> = [-1.0f32, 2.0, -3.0, 4.0]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+    frame.write(0, &vals).unwrap();
+    let dev = Device::mock();
+    let mut s = dev.stream();
+    let x = s.import_dmabuf::<F32>(frame.as_fd(), 4).unwrap();
+    assert_eq!(download(&mut s, &x), [-1.0, 2.0, -3.0, 4.0]);
+    let mut y = s.alloc::<F32>(4).unwrap();
+    ops::act(&mut s, Choice::Up, Act::Relu, &x, &mut y)
+        .unwrap()
+        .wait()
+        .unwrap();
+    ops::act(&mut s, Choice::Up, Act::Relu, &y, &mut { x })
+        .unwrap()
+        .wait()
+        .unwrap();
+    let mut out = [0u8; 16];
+    frame.read(0, &mut out).unwrap();
+    assert_eq!(
+        &out[..8],
+        &[0.0f32.to_le_bytes(), 2.0f32.to_le_bytes()].concat()[..]
     );
 }

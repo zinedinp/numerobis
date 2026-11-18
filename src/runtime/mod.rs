@@ -6,7 +6,7 @@ pub mod backend;
 pub(crate) mod buffer;
 pub(crate) mod device;
 #[cfg(target_os = "linux")]
-pub(crate) mod dmabuf;
+pub mod dmabuf;
 pub(crate) mod error;
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]

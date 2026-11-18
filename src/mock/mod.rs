@@ -26,7 +26,7 @@ struct State {
     /// Buffers shared through a dma-buf / memfd: the mapping is the truth,
     /// `mem` is refreshed from it before and written back after every access.
     #[cfg(target_os = "linux")]
-    shared: HashMap<u64, crate::runtime::dmabuf::HostMapping>,
+    shared: HashMap<u64, crate::runtime::dmabuf::HostDmabuf>,
 }
 
 impl State {
@@ -40,7 +40,8 @@ impl State {
         #[cfg(target_os = "linux")]
         for (id, m) in &self.shared {
             if let Some(v) = self.mem.get_mut(id) {
-                m.read(v);
+                // Same length by construction (export/import size the mapping from the buffer).
+                let _ = m.read(0, v);
             }
         }
     }
@@ -50,7 +51,7 @@ impl State {
         #[cfg(target_os = "linux")]
         for (id, m) in &self.shared {
             if let Some(v) = self.mem.get(id) {
-                m.write(v);
+                let _ = m.write(0, v);
             }
         }
     }
@@ -198,31 +199,28 @@ impl Backend for MockBackend {
     /// it, a memfd; either way another device (or process) maps the same pages.
     #[cfg(target_os = "linux")]
     fn export_dmabuf(&self, id: BufId) -> Result<std::os::fd::OwnedFd> {
-        use crate::runtime::dmabuf::{HostMapping, host_dmabuf};
+        use crate::runtime::dmabuf::HostDmabuf;
         let mut s = self.lock();
         if let Some(m) = s.shared.get(&id.0) {
-            return m
-                .fd()
-                .try_clone_to_owned()
-                .map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)));
+            return m.try_clone_fd();
         }
         let data = s
             .mem
             .get(&id.0)
             .ok_or_else(|| invalid("unknown buffer"))?
             .clone();
-        let (fd, _) = host_dmabuf(data.len())?;
-        let m = HostMapping::new(std::os::fd::AsFd::as_fd(&fd), data.len())?;
-        m.write(&data);
+        let m = HostDmabuf::new(data.len())?;
+        m.write(0, &data)?;
+        let fd = m.try_clone_fd()?;
         s.shared.insert(id.0, m);
         Ok(fd)
     }
 
     #[cfg(target_os = "linux")]
     fn import_dmabuf(&self, fd: std::os::fd::BorrowedFd<'_>, bytes: usize) -> Result<BufId> {
-        let m = crate::runtime::dmabuf::HostMapping::new(fd, bytes)?;
+        let m = crate::runtime::dmabuf::HostDmabuf::map(fd, bytes)?;
         let mut v = vec![0; bytes];
-        m.read(&mut v);
+        m.read(0, &mut v)?;
         let mut s = self.lock();
         s.next += 1;
         let id = s.next;

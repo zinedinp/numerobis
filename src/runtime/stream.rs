@@ -256,7 +256,7 @@ impl Stream {
                 E::FORMAT.block()
             ))
         })?;
-        let have = crate::runtime::dmabuf::fd_size(fd)?;
+        let have = crate::runtime::dmabuf::size(fd)?;
         if have < bytes {
             return Err(invalid(format!(
                 "dma-buf has {have} bytes, {len} × {} needs {bytes}",

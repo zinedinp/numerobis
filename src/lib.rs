@@ -12,6 +12,7 @@
 //! |---|---|
 //! | [`elem`] | element types, split into `float`, `int`, `block` |
 //! | [`ops`] | the API, one module per calculation kind (`convert`, `quantize`, `int`, `gemm`, `reduce`, `act`, `conv`, `resize`) |
+//! | [`dmabuf`] | `HostDmabuf`, PRIME helpers: zero-copy sharing with Vulkan/KMS/V4L2 |
 //! | [`sync`] | `SyncFile` / `Timeline`: fences shared with Vulkan semaphores |
 //! | [`runtime`] | `Backend` trait, `Device`, `Stream`, `DeviceBuffer`, `CommandList`, `Exactness`, dma-buf, errors |
 //! | [`auto_up`], [`auto_down`], [`tiers`] | tier selection over the vendor ladders |
@@ -63,10 +64,10 @@ pub mod v3d;
 pub use engine::{Access, DeviceClass, Engine, FeatureSet};
 pub use miraculix::formats::Overflow;
 pub use ops::{Choice, GemmShape};
-#[cfg(target_os = "linux")]
-pub use runtime::sync;
 pub use runtime::{
     Bind, CommandList, DEFAULT_TIMEOUT, Device, DeviceBuffer, Error, Exactness, HostCopy, Pending,
     Placement, Result, Stream,
 };
+#[cfg(target_os = "linux")]
+pub use runtime::{dmabuf, sync};
 pub use tiers::Tier;
