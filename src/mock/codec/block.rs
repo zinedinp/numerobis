@@ -3,7 +3,9 @@
 
 use miraculix::formats::bfp::{bfp_decode_rows, bfp_encode_rows};
 use miraculix::formats::gguf::{dequantize_q6_k, dequantize_q8_0};
-use miraculix::formats::mx::{mx_dequantize, mx_quantize, nvfp4_dequantize, nvfp4_quantize, nvfp4_tensor_scale};
+use miraculix::formats::mx::{
+    mx_dequantize, mx_quantize, nvfp4_dequantize, nvfp4_quantize, nvfp4_tensor_scale,
+};
 
 use crate::elem::Format;
 

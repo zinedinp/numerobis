@@ -5,7 +5,9 @@ mod common;
 use common::*;
 use miraculix::formats::bfp::{BfpElem, bfp_encode_rows};
 use miraculix::formats::gguf::{Q8_0_BYTES, dequantize_q8_0};
-use miraculix::formats::mx::{MxElem, mx_dequantize, mx_quantize, nvfp4_quantize, nvfp4_tensor_scale};
+use miraculix::formats::mx::{
+    MxElem, mx_dequantize, mx_quantize, nvfp4_quantize, nvfp4_tensor_scale,
+};
 use numerobis::elem::*;
 use numerobis::{Choice, ops};
 
@@ -16,7 +18,10 @@ fn mxfp4() {
         let x = Rng(5).vec(128, 30.0);
         let xb = s.upload::<F32>(&x).unwrap();
         let mut q = s.alloc::<Mx<E2M1>>(128).unwrap();
-        ops::quantize(&mut s, Choice::Up, &xb, &mut q).unwrap().wait().unwrap();
+        ops::quantize(&mut s, Choice::Up, &xb, &mut q)
+            .unwrap()
+            .wait()
+            .unwrap();
         let got = bytes(&mut s, &q);
         let (mut sc, mut d) = (vec![0u8; 4], vec![0u8; 64]);
         mx_quantize(MxElem::Fp4, &x, &mut sc, &mut d);
@@ -34,11 +39,17 @@ fn nvfp4() {
         let x = Rng(6).vec(128, 30.0);
         let xb = s.upload::<F32>(&x).unwrap();
         let mut q = s.alloc::<Nvfp4>(128).unwrap();
-        ops::quantize(&mut s, Choice::Up, &xb, &mut q).unwrap().wait().unwrap();
+        ops::quantize(&mut s, Choice::Up, &xb, &mut q)
+            .unwrap()
+            .wait()
+            .unwrap();
         let ts = nvfp4_tensor_scale(&x);
         let (mut sc, mut d) = (vec![0u8; 8], vec![0u8; 64]);
         nvfp4_quantize(&x, ts, &mut sc, &mut d);
-        assert_eq!(bytes(&mut s, &q), [d, sc, ts.to_le_bytes().to_vec()].concat());
+        assert_eq!(
+            bytes(&mut s, &q),
+            [d, sc, ts.to_le_bytes().to_vec()].concat()
+        );
     }
 }
 
@@ -49,7 +60,10 @@ fn bfp8_b() {
         let x = Rng(8).vec(128, 30.0);
         let xb = s.upload::<F32>(&x).unwrap();
         let mut q = s.alloc::<Bfp<M7>>(128).unwrap();
-        ops::quantize(&mut s, Choice::Up, &xb, &mut q).unwrap().wait().unwrap();
+        ops::quantize(&mut s, Choice::Up, &xb, &mut q)
+            .unwrap()
+            .wait()
+            .unwrap();
         let (mut ex, mut d) = (vec![0u8; 8], vec![0u8; 128]);
         bfp_encode_rows(BfpElem::M7, &x, &mut ex, &mut d);
         assert_eq!(bytes(&mut s, &q), [d, ex].concat());

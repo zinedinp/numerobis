@@ -14,11 +14,11 @@
 //!   byte per block; `Nvfp4` ends with the per-tensor scale as little-endian `f32`.
 //! - `Q8_0`, `Q6K`: native GGUF blocks (scale interleaved).
 
+use miraculix::formats::MiniFloat;
 use miraculix::formats::bfp::{BFP_ROW, BfpElem};
 use miraculix::formats::gguf::{Q6_K_BLOCK, Q6_K_BYTES, Q8_0_BLOCK, Q8_0_BYTES};
 use miraculix::formats::int::packed_len;
 use miraculix::formats::mx::{MX_BLOCK, MxElem, NVFP4_BLOCK};
-use miraculix::formats::MiniFloat;
 
 macro_rules! elem {
     ($(#[$m:meta])* $t:ident = $fmt:expr $(, host $h:ty)?) => {
@@ -36,8 +36,10 @@ pub mod float;
 mod header;
 pub mod int;
 
-pub use block::{BlockElem, Bfp, BfpKind, M1, M3, M7, Mx, MxKind, Nvfp4, Q6K, Q8_0, Quantize};
-pub use float::{Bf16, E2M1, E2M3, E3M2, E4M3Fn, E4M3Fnuz, E5M2, E5M2Fnuz, F16, F32, FloatElem, Tf32};
+pub use block::{Bfp, BfpKind, BlockElem, M1, M3, M7, Mx, MxKind, Nvfp4, Q6K, Q8_0, Quantize};
+pub use float::{
+    Bf16, E2M1, E2M3, E3M2, E4M3Fn, E4M3Fnuz, E5M2, E5M2Fnuz, F16, F32, FloatElem, Tf32,
+};
 pub use header::formats_header;
 pub use int::{I1, I2, I4, I8, I32, IntElem, PackedInt, U4, U8};
 
@@ -54,7 +56,10 @@ pub enum Format {
     /// A [`MiniFloat`] code: 16/8 bits byte-aligned, 6/4 bits packed.
     Float(MiniFloat),
     /// Packed integer of 1, 2 or 4 bits.
-    Int { bits: u8, signed: bool },
+    Int {
+        bits: u8,
+        signed: bool,
+    },
     Mx(MxElem),
     Nvfp4,
     Bfp(BfpElem),
@@ -82,10 +87,22 @@ impl Format {
             Format::Float(M::F16) => "f16",
             Format::Float(M::Bf16) => "bf16",
             Format::Float(_) => "minifloat",
-            Format::Int { bits: 4, signed: true } => "i4",
-            Format::Int { bits: 4, signed: false } => "u4",
-            Format::Int { bits: 2, signed: true } => "i2",
-            Format::Int { bits: 2, signed: false } => "u2",
+            Format::Int {
+                bits: 4,
+                signed: true,
+            } => "i4",
+            Format::Int {
+                bits: 4,
+                signed: false,
+            } => "u4",
+            Format::Int {
+                bits: 2,
+                signed: true,
+            } => "i2",
+            Format::Int {
+                bits: 2,
+                signed: false,
+            } => "u2",
             Format::Int { bits: 1, .. } => "i1",
             Format::Int { .. } => "int",
             Format::Mx(MxElem::Fp4) => "mxfp4",
@@ -121,12 +138,18 @@ impl Format {
 
     /// Block-scaled or GGUF format (needs a quantizer, not a plain convert).
     pub const fn is_block_scaled(self) -> bool {
-        matches!(self, Format::Mx(_) | Format::Nvfp4 | Format::Bfp(_) | Format::Q8_0 | Format::Q6K)
+        matches!(
+            self,
+            Format::Mx(_) | Format::Nvfp4 | Format::Bfp(_) | Format::Q8_0 | Format::Q6K
+        )
     }
 
     /// Integer formats (usable with an `I32` accumulator).
     pub const fn is_integer(self) -> bool {
-        matches!(self, Format::I32 | Format::I8 | Format::U8 | Format::Int { .. })
+        matches!(
+            self,
+            Format::I32 | Format::I8 | Format::U8 | Format::Int { .. }
+        )
     }
 
     /// Device bytes for `len` elements, or `None` if `len` is not a multiple of [`block`](Self::block).

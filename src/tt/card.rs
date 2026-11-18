@@ -34,14 +34,19 @@ pub fn arc_alive(path: &str) -> bool {
     static DEAD: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
     let mut dead = DEAD.lock().unwrap_or_else(|e| e.into_inner());
     let dead = dead.get_or_insert_with(HashMap::new);
-    if dead.get(path).is_some_and(|t| t.elapsed() < Duration::from_secs(60)) {
+    if dead
+        .get(path)
+        .is_some_and(|t| t.elapsed() < Duration::from_secs(60))
+    {
         return false;
     }
     let n = path.rsplit('/').next().unwrap_or("0");
-    let alive = std::fs::read_to_string(format!("/sys/class/tenstorrent/tenstorrent!{n}/tt_heartbeat"))
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .is_some_and(|v| v != u32::MAX as u64);
+    let alive = std::fs::read_to_string(format!(
+        "/sys/class/tenstorrent/tenstorrent!{n}/tt_heartbeat"
+    ))
+    .ok()
+    .and_then(|s| s.trim().parse::<u64>().ok())
+    .is_some_and(|v| v != u32::MAX as u64);
     if alive {
         dead.remove(path);
     } else {
@@ -53,7 +58,10 @@ pub fn arc_alive(path: &str) -> bool {
 /// Board name from sysfs (`p150a`, `p100a`, ...), if the firmware reports one.
 pub fn card_type(path: &str) -> Option<String> {
     let n = path.rsplit('/').next().unwrap_or("0");
-    let t = std::fs::read_to_string(format!("/sys/class/tenstorrent/tenstorrent!{n}/tt_card_type")).ok()?;
+    let t = std::fs::read_to_string(format!(
+        "/sys/class/tenstorrent/tenstorrent!{n}/tt_card_type"
+    ))
+    .ok()?;
     let t = t.trim();
     (!t.is_empty() && t != "unknown").then(|| t.to_string())
 }
@@ -69,28 +77,70 @@ pub struct Card {
 impl Card {
     pub fn open(path: &str) -> Result<Card> {
         let fd = Fd::open(path)?;
-        let mut info = get_device_info { in_output_size_bytes: 20, ..Default::default() };
+        let mut info = get_device_info {
+            in_output_size_bytes: 20,
+            ..Default::default()
+        };
         call(&fd, GET_DEVICE_INFO, &mut info)?;
         let arch = match info.device_id {
             0x401e => Arch::Wormhole,
             0xb140 => Arch::Blackhole,
             d => return Err(Error::Unsupported(format!("Tenstorrent device id {d:#x}"))),
         };
-        let mut drv = get_driver_info { in_output_size_bytes: 12, ..Default::default() };
+        let mut drv = get_driver_info {
+            in_output_size_bytes: 12,
+            ..Default::default()
+        };
         call(&fd, GET_DRIVER_INFO, &mut drv)?;
         let b = info.bus_dev_fn;
-        let pci = format!("{:04x}:{:02x}:{:02x}.{}", info.pci_domain, b >> 8, (b >> 3) & 0x1f, b & 7);
-        Ok(Card { fd: Arc::new(fd), arch, device_id: info.device_id, pci, driver: (drv.major, drv.minor, drv.patch) })
+        let pci = format!(
+            "{:04x}:{:02x}:{:02x}.{}",
+            info.pci_domain,
+            b >> 8,
+            (b >> 3) & 0x1f,
+            b & 7
+        );
+        Ok(Card {
+            fd: Arc::new(fd),
+            arch,
+            device_id: info.device_id,
+            pci,
+            driver: (drv.major, drv.minor, drv.patch),
+        })
     }
 
     /// Allocates a TLB window of `size` bytes (2 MiB on Blackhole/Wormhole).
     pub fn window(&self, size: u64) -> Result<Window> {
-        let mut a = allocate_tlb { size, ..Default::default() };
+        let mut a = allocate_tlb {
+            size,
+            ..Default::default()
+        };
         call(&self.fd, ALLOCATE_TLB, &mut a)?;
-        let uc = Map::new(0, size as usize, RW, libc::MAP_SHARED, self.fd.0, a.mmap_offset_uc);
-        let wc = Map::new(0, size as usize, RW, libc::MAP_SHARED, self.fd.0, a.mmap_offset_wc);
+        let uc = Map::new(
+            0,
+            size as usize,
+            RW,
+            libc::MAP_SHARED,
+            self.fd.0,
+            a.mmap_offset_uc,
+        );
+        let wc = Map::new(
+            0,
+            size as usize,
+            RW,
+            libc::MAP_SHARED,
+            self.fd.0,
+            a.mmap_offset_wc,
+        );
         match (uc, wc) {
-            (Ok(uc), Ok(wc)) => Ok(Window { fd: self.fd.clone(), id: a.id, size, uc, wc, target: None }),
+            (Ok(uc), Ok(wc)) => Ok(Window {
+                fd: self.fd.clone(),
+                id: a.id,
+                size,
+                uc,
+                wc,
+                target: None,
+            }),
             (Err(e), _) | (_, Err(e)) => {
                 let mut f = free_tlb { id: a.id };
                 let _ = call(&self.fd, FREE_TLB, &mut f);
@@ -119,7 +169,13 @@ impl Window {
         }
         let mut c = configure_tlb {
             id: self.id,
-            config: noc_tlb_config { addr, x_end: x, y_end: y, ordering: ORDER_STRICT, ..Default::default() },
+            config: noc_tlb_config {
+                addr,
+                x_end: x,
+                y_end: y,
+                ordering: ORDER_STRICT,
+                ..Default::default()
+            },
             ..Default::default()
         };
         call(&self.fd, CONFIGURE_TLB, &mut c)?;
@@ -142,14 +198,18 @@ pub struct Noc {
 
 impl Noc {
     pub fn new(card: &Card) -> Result<Noc> {
-        Ok(Noc { w: card.window(TLB_2M)? })
+        Ok(Noc {
+            w: card.window(TLB_2M)?,
+        })
     }
 
     fn at(&mut self, x: u16, y: u16, addr: u64, len: usize) -> Result<usize> {
         let base = addr & !(TLB_2M - 1);
         let off = (addr - base) as usize;
         if off + len > TLB_2M as usize {
-            return Err(Error::InvalidArgument("NoC access crosses a 2 MiB window".into()));
+            return Err(Error::InvalidArgument(
+                "NoC access crosses a 2 MiB window".into(),
+            ));
         }
         self.w.point(x, y, base)?;
         Ok(off)
@@ -182,7 +242,9 @@ impl Noc {
             if !tail.is_empty() {
                 let mut last = [0u8; 4];
                 last[..tail.len()].copy_from_slice(tail);
-                self.w.wc.write32(off + words.len() * 4, u32::from_le_bytes(last));
+                self.w
+                    .wc
+                    .write32(off + words.len() * 4, u32::from_le_bytes(last));
             }
             std::sync::atomic::fence(std::sync::atomic::Ordering::SeqCst);
             done += n;

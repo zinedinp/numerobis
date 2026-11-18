@@ -5,8 +5,8 @@ use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::runtime::backend::{Backend, BufId};
 use crate::elem::{Elem, Format, HostRepr, from_bytes};
+use crate::runtime::backend::{Backend, BufId};
 
 /// Owner of one backend allocation. Freed when the last `Arc` drops; streams
 /// keep an `Arc` for every buffer used by in-flight work, so a buffer is never
@@ -21,7 +21,12 @@ pub(crate) struct RawBuffer {
 
 impl RawBuffer {
     pub(crate) fn new(backend: Arc<dyn Backend>, id: BufId, bytes: usize) -> RawBuffer {
-        RawBuffer { backend, id, bytes, approx: AtomicBool::new(false) }
+        RawBuffer {
+            backend,
+            id,
+            bytes,
+            approx: AtomicBool::new(false),
+        }
     }
     pub(crate) fn is_approx(&self) -> bool {
         self.approx.load(Ordering::Acquire)
@@ -66,7 +71,11 @@ pub struct DeviceBuffer<E: Elem> {
 
 impl<E: Elem> DeviceBuffer<E> {
     pub(crate) fn new(raw: Arc<RawBuffer>, len: usize) -> Self {
-        DeviceBuffer { raw, len, _e: PhantomData }
+        DeviceBuffer {
+            raw,
+            len,
+            _e: PhantomData,
+        }
     }
 
     /// Number of elements.
@@ -105,7 +114,13 @@ impl<E: Elem> DeviceBuffer<E> {
 
 impl<E: Elem> core::fmt::Debug for DeviceBuffer<E> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "DeviceBuffer<{}>(len {}, {} bytes)", E::NAME, self.len, self.raw.bytes)
+        write!(
+            f,
+            "DeviceBuffer<{}>(len {}, {} bytes)",
+            E::NAME,
+            self.len,
+            self.raw.bytes
+        )
     }
 }
 
@@ -126,7 +141,11 @@ pub struct HostCopy<E: Elem> {
 
 impl<E: Elem> HostCopy<E> {
     pub(crate) fn new(bytes: Vec<u8>, len: usize) -> Self {
-        HostCopy { bytes, len, _e: PhantomData }
+        HostCopy {
+            bytes,
+            len,
+            _e: PhantomData,
+        }
     }
 
     pub fn len(&self) -> usize {

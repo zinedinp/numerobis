@@ -63,9 +63,10 @@ pub mod v3d;
 pub use engine::{Access, DeviceClass, Engine, FeatureSet};
 pub use miraculix::formats::Overflow;
 pub use ops::{Choice, GemmShape};
-pub use runtime::{
-    Bind, CommandList, DEFAULT_TIMEOUT, Device, DeviceBuffer, Error, Exactness, HostCopy, Pending, Placement, Result, Stream,
-};
 #[cfg(target_os = "linux")]
 pub use runtime::sync;
+pub use runtime::{
+    Bind, CommandList, DEFAULT_TIMEOUT, Device, DeviceBuffer, Error, Exactness, HostCopy, Pending,
+    Placement, Result, Stream,
+};
 pub use tiers::Tier;

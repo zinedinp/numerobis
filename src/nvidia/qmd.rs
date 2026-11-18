@@ -78,7 +78,10 @@ impl Qmd {
     /// Sets bits `hi..=lo` (may span two words) to `v`.
     pub fn set(&mut self, (hi, lo): (u32, u32), v: u64) {
         let width = hi - lo + 1;
-        assert!(width <= 64 && (width == 64 || v < (1u64 << width)), "QMD field {hi}:{lo} overflow ({v:#x})");
+        assert!(
+            width <= 64 && (width == 64 || v < (1u64 << width)),
+            "QMD field {hi}:{lo} overflow ({v:#x})"
+        );
         for b in 0..width {
             let bit = lo + b;
             let (w, s) = ((bit / 32) as usize, bit % 32);
@@ -87,7 +90,9 @@ impl Qmd {
     }
 
     pub fn get(&self, (hi, lo): (u32, u32)) -> u64 {
-        (0..hi - lo + 1).map(|b| (((self.0[((lo + b) / 32) as usize] >> ((lo + b) % 32)) & 1) as u64) << b).sum()
+        (0..hi - lo + 1)
+            .map(|b| (((self.0[((lo + b) / 32) as usize] >> ((lo + b) % 32)) & 1) as u64) << b)
+            .sum()
     }
 
     /// Binds constant buffer `i` at device address `addr` with `size` bytes.

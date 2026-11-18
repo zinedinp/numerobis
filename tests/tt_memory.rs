@@ -17,7 +17,16 @@ use numerobis::tt::card::{Card, Noc, arc_alive, card_type};
 
 const PATH: &str = "/dev/tenstorrent/0";
 /// First NoC 0 endpoint of each DRAM channel (blackhole_140_arch.yaml).
-const DRAM: [(u16, u16); 8] = [(0, 0), (0, 2), (0, 9), (0, 5), (9, 0), (9, 2), (9, 9), (9, 5)];
+const DRAM: [(u16, u16); 8] = [
+    (0, 0),
+    (0, 2),
+    (0, 9),
+    (0, 5),
+    (9, 0),
+    (9, 2),
+    (9, 9),
+    (9, 5),
+];
 /// Usable bytes per channel (4 GiB minus 16 MiB firmware reserve).
 const CHANNEL: u64 = 4_278_190_080;
 const SOFT_RESET: u64 = 0xFFB1_21B0;
@@ -53,7 +62,10 @@ fn check(noc: &mut Noc, what: &str, (x, y): (u16, u16), addr: u64, len: usize) -
         noc.read(x, y, addr, &mut back).unwrap();
         if let Some(i) = want.chunks(4).zip(back.chunks(4)).position(|(w, g)| w != g) {
             let (w, g) = (&want[i * 4..i * 4 + 4], &back[i * 4..i * 4 + 4]);
-            panic!("{what}: pattern {kind} mismatch at {:#x}: wrote {w:02x?}, read {g:02x?}", addr + i as u64 * 4);
+            panic!(
+                "{what}: pattern {kind} mismatch at {:#x}: wrote {w:02x?}, read {g:02x?}",
+                addr + i as u64 * 4
+            );
         }
     }
     (3 * 2 * len) as f64 / t.elapsed().as_secs_f64() / (1 << 20) as f64
@@ -62,7 +74,10 @@ fn check(noc: &mut Noc, what: &str, (x, y): (u16, u16), addr: u64, len: usize) -
 fn core() -> (u16, u16) {
     std::env::var("NUMEROBIS_TT_CORE")
         .ok()
-        .and_then(|v| v.split_once(',').and_then(|(a, b)| Some((a.trim().parse().ok()?, b.trim().parse().ok()?))))
+        .and_then(|v| {
+            v.split_once(',')
+                .and_then(|(a, b)| Some((a.trim().parse().ok()?, b.trim().parse().ok()?)))
+        })
         .unwrap_or((1, 2))
 }
 
@@ -79,8 +94,15 @@ fn dram_l1_and_device_round_trip() {
     let card = Card::open(PATH).unwrap();
     let mut noc = Noc::new(&card).unwrap();
     let board = card_type(PATH);
-    let channels = if board.as_deref().is_some_and(|b| b.starts_with("p150")) { 8 } else { 1 };
-    let mb: usize = std::env::var("NUMEROBIS_TT_MEM_MB").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let channels = if board.as_deref().is_some_and(|b| b.starts_with("p150")) {
+        8
+    } else {
+        1
+    };
+    let mb: usize = std::env::var("NUMEROBIS_TT_MEM_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
     let len = mb << 20;
     println!("board {board:?}, {channels} DRAM channel(s), {mb} MiB per region");
 
@@ -94,7 +116,11 @@ fn dram_l1_and_device_round_trip() {
     // L1: hold the tile's five cores in reset, then test all 1.5 MiB. The
     // tt backend reloads its image the next time it opens the tile.
     let (x, y) = core();
-    assert_ne!(noc.read32(x, y, SOFT_RESET).unwrap(), u32::MAX, "tile {x}-{y} does not answer");
+    assert_ne!(
+        noc.read32(x, y, SOFT_RESET).unwrap(),
+        u32::MAX,
+        "tile {x}-{y} does not answer"
+    );
     noc.write32(x, y, SOFT_RESET, RESET_ALL).unwrap();
     let rate = check(&mut noc, &format!("L1 {x}-{y}"), (x, y), 0, 0x18_0000);
     println!("L1 {x}-{y}: 1536 KiB ok ({rate:.0} MiB/s)");
@@ -104,17 +130,30 @@ fn dram_l1_and_device_round_trip() {
     // Through the public API: DRAM buffer upload/download and one kernel that
     // moves data DRAM -> L1 -> DRAM on the core.
     use numerobis::{Choice, Overflow, elem::*, ops};
-    let dev = numerobis::tt::backend::open_all().into_iter().next().expect("tt backend did not open");
+    let dev = numerobis::tt::backend::open_all()
+        .into_iter()
+        .next()
+        .expect("tt backend did not open");
     let mut s = dev.stream();
     let n = 4 << 20;
     let x: Vec<f32> = (0..n).map(|i| i as f32).collect();
     let b = s.upload::<F32>(&x).unwrap();
-    assert_eq!(s.download(&b).unwrap().wait().unwrap().to_vec(), x, "16 MiB device buffer round trip");
+    assert_eq!(
+        s.download(&b).unwrap().wait().unwrap().to_vec(),
+        x,
+        "16 MiB device buffer round trip"
+    );
     let small = s.upload::<F32>(&x[..4096]).unwrap();
     let mut h = s.alloc::<F16>(4096).unwrap();
-    ops::convert(&mut s, Choice::Up, &small, &mut h, Overflow::Saturate).unwrap().wait().unwrap();
+    ops::convert(&mut s, Choice::Up, &small, &mut h, Overflow::Saturate)
+        .unwrap()
+        .wait()
+        .unwrap();
     let mut back = s.alloc::<F32>(4096).unwrap();
-    ops::convert(&mut s, Choice::Up, &h, &mut back, Overflow::Saturate).unwrap().wait().unwrap();
+    ops::convert(&mut s, Choice::Up, &h, &mut back, Overflow::Saturate)
+        .unwrap()
+        .wait()
+        .unwrap();
     let got = s.download(&back).unwrap().wait().unwrap().to_vec();
     for (i, g) in got.iter().enumerate() {
         assert_eq!(*g, half_round(i as f32), "element {i}");

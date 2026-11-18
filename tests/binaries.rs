@@ -8,7 +8,9 @@ use numerobis::loader::elf::{Elf, machine};
 use numerobis::runtime::abi::SYMBOLS;
 
 fn check(dir: &str, ext: &str, want_machine: u16, kernel_symbol: impl Fn(&str) -> String) -> usize {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("kernels/bin").join(dir);
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("kernels/bin")
+        .join(dir);
     let mut n = 0;
     for e in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
         let path = e.unwrap().path();
@@ -21,7 +23,11 @@ fn check(dir: &str, ext: &str, want_machine: u16, kernel_symbol: impl Fn(&str) -
         let syms = elf.symbols().unwrap();
         for s in SYMBOLS {
             let want = kernel_symbol(s);
-            assert!(syms.iter().any(|x| x.name == want && x.shndx != 0), "{}: missing {want}", path.display());
+            assert!(
+                syms.iter().any(|x| x.name == want && x.shndx != 0),
+                "{}: missing {want}",
+                path.display()
+            );
         }
         // `.nv.*` (e.g. `.nv.reservedSmem.offset0` on sm_120) are loader-resolved
         // reserved symbols, not library imports; the raw NVIDIA loader
@@ -31,7 +37,11 @@ fn check(dir: &str, ext: &str, want_machine: u16, kernel_symbol: impl Fn(&str) -
             .filter(|s| s.shndx == 0 && !s.name.is_empty() && !s.name.starts_with(".nv."))
             .map(|s| s.name)
             .collect();
-        assert!(undefined.is_empty(), "{}: unresolved {undefined:?}", path.display());
+        assert!(
+            undefined.is_empty(),
+            "{}: unresolved {undefined:?}",
+            path.display()
+        );
         n += 1;
     }
     n
@@ -40,12 +50,18 @@ fn check(dir: &str, ext: &str, want_machine: u16, kernel_symbol: impl Fn(&str) -
 #[test]
 fn amd_hsaco() {
     // HSACO kernels are found through their kernel descriptor `<name>.kd`.
-    assert_eq!(check("amd", "hsaco", machine::AMDGPU, |s| format!("{s}.kd")), 6);
+    assert_eq!(
+        check("amd", "hsaco", machine::AMDGPU, |s| format!("{s}.kd")),
+        6
+    );
 }
 
 #[test]
 fn nvidia_cubin() {
-    assert_eq!(check("nvidia", "cubin", machine::CUDA, |s| s.to_string()), 5);
+    assert_eq!(
+        check("nvidia", "cubin", machine::CUDA, |s| s.to_string()),
+        5
+    );
 }
 
 #[test]
@@ -61,11 +77,21 @@ fn tenstorrent_image() {
     assert_eq!(elf.entry, 0, "entry must be the reset PC");
     let syms = elf.symbols().unwrap();
     for want in ["_start", "nb_main", "fmaf", "__divsf3"] {
-        assert!(syms.iter().any(|s| s.name == want && s.shndx != 0), "missing {want}");
+        assert!(
+            syms.iter().any(|s| s.name == want && s.shndx != 0),
+            "missing {want}"
+        );
     }
-    assert!(syms.iter().all(|s| s.shndx != 0 || s.name.is_empty()), "unresolved symbols");
+    assert!(
+        syms.iter().all(|s| s.shndx != 0 || s.name.is_empty()),
+        "unresolved symbols"
+    );
     for s in elf.sections.iter().filter(|s| s.flags & 2 != 0) {
-        assert!(s.addr + s.size <= 0x18000, "{} overlaps the mailbox", s.name);
+        assert!(
+            s.addr + s.size <= 0x18000,
+            "{} overlaps the mailbox",
+            s.name
+        );
     }
 }
 
@@ -77,6 +103,9 @@ fn spirv_module() {
     // Entry point names are stored as NUL-terminated strings.
     for s in SYMBOLS {
         let needle = [s.as_bytes(), &[0]].concat();
-        assert!(b.windows(needle.len()).any(|w| w == needle), "missing entry point {s}");
+        assert!(
+            b.windows(needle.len()).any(|w| w == needle),
+            "missing entry point {s}"
+        );
     }
 }

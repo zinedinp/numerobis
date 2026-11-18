@@ -1,9 +1,9 @@
 //! Matrix multiply.
 
 use super::{Choice, key, len_u32};
-use crate::runtime::backend::{Arg, OpSig};
-use crate::runtime::DeviceBuffer;
 use crate::elem::{Acc, Elem};
+use crate::runtime::DeviceBuffer;
+use crate::runtime::backend::{Arg, OpSig};
 use crate::runtime::error::{Result, invalid};
 use crate::runtime::{Pending, Stream};
 
@@ -61,13 +61,24 @@ pub fn gemm<A: Elem, B: Elem, C: Acc>(
     }
     for (f, name) in [(A::FORMAT, "A"), (B::FORMAT, "B")] {
         if k % f.block() != 0 {
-            return Err(invalid(format!("gemm: K = {k} is not a multiple of the {name} block {}", f.block())));
+            return Err(invalid(format!(
+                "gemm: K = {k} is not a multiple of the {name} block {}",
+                f.block()
+            )));
         }
     }
-    if A::FORMAT.is_integer() != B::FORMAT.is_integer() || A::FORMAT.is_integer() != C::FORMAT.is_integer() {
-        return Err(invalid("gemm: integer inputs need an I32 accumulator, float inputs a float one"));
+    if A::FORMAT.is_integer() != B::FORMAT.is_integer()
+        || A::FORMAT.is_integer() != C::FORMAT.is_integer()
+    {
+        return Err(invalid(
+            "gemm: integer inputs need an I32 accumulator, float inputs a float one",
+        ));
     }
-    let sig = OpSig::Gemm { a: A::FORMAT, b: B::FORMAT, acc: C::FORMAT };
+    let sig = OpSig::Gemm {
+        a: A::FORMAT,
+        b: B::FORMAT,
+        acc: C::FORMAT,
+    };
     let kk = key(s, choice, sig, batch > 1)?;
     let args = [
         Arg::Buf(a.raw.id),

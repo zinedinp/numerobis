@@ -58,7 +58,17 @@ impl Push<'_> {
 
     /// Host semaphore operation on `addr` (`SEM_ADDR_LO..SEM_EXECUTE`).
     pub fn semaphore(&mut self, addr: u64, payload: u64, exec: u32) {
-        self.method(0, NVC56F_SEM_ADDR_LO, &[addr as u32, (addr >> 32) as u32, payload as u32, (payload >> 32) as u32, exec | SEM_EXECUTE_PAYLOAD_SIZE_64BIT]);
+        self.method(
+            0,
+            NVC56F_SEM_ADDR_LO,
+            &[
+                addr as u32,
+                (addr >> 32) as u32,
+                payload as u32,
+                (payload >> 32) as u32,
+                exec | SEM_EXECUTE_PAYLOAD_SIZE_64BIT,
+            ],
+        );
     }
 
     /// Waits for the engine to drain (a release with WFI to a scratch slot).
@@ -70,7 +80,10 @@ impl Push<'_> {
     /// Copies `bytes` into the arena (aligned to `align`) and returns its GPU address.
     pub fn data(&mut self, bytes: &[u8], align: u64) -> Result<u64> {
         let va = self.q.arena_alloc(bytes.len() as u64, align)?;
-        self.q.arena.cpu().write_bytes((va - self.q.arena.va) as usize, bytes);
+        self.q
+            .arena
+            .cpu()
+            .write_bytes((va - self.q.arena.va) as usize, bytes);
         Ok(va)
     }
 }
@@ -96,11 +109,30 @@ fn data64(v: u64) -> [u32; 2] {
 
 impl Queues {
     pub fn new(gpu: &Gpu, compute_class: u32, copy_class: u32) -> Result<Queues> {
-        let mut gp = NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS { engineType: NV2080_ENGINE_TYPE_GRAPHICS, ..Default::default() };
-        let group = rm_alloc(&gpu.ctl, gpu.root, gpu.device, KEPLER_CHANNEL_GROUP_A, Some(&mut gp))?;
+        let mut gp = NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS {
+            engineType: NV2080_ENGINE_TYPE_GRAPHICS,
+            ..Default::default()
+        };
+        let group = rm_alloc(
+            &gpu.ctl,
+            gpu.root,
+            gpu.device,
+            KEPLER_CHANNEL_GROUP_A,
+            Some(&mut gp),
+        )?;
         let area = gpu.alloc(2 << 20, Mem::VramMapped)?;
-        let mut cp = NV_CTXSHARE_ALLOCATION_PARAMETERS { hVASpace: gpu.vaspace, flags: NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC, ..Default::default() };
-        let ctxshare = rm_alloc(&gpu.ctl, gpu.root, group, FERMI_CONTEXT_SHARE_A, Some(&mut cp))?;
+        let mut cp = NV_CTXSHARE_ALLOCATION_PARAMETERS {
+            hVASpace: gpu.vaspace,
+            flags: NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC,
+            ..Default::default()
+        };
+        let ctxshare = rm_alloc(
+            &gpu.ctl,
+            gpu.root,
+            group,
+            FERMI_CONTEXT_SHARE_A,
+            Some(&mut cp),
+        )?;
         let notifier = gpu.alloc(64 << 10, Mem::Vram)?;
         let channel = |offset: u64| -> Result<Channel> {
             let mut p = NV_CHANNEL_ALLOC_PARAMS {
@@ -113,30 +145,73 @@ impl Queues {
             };
             p.hUserdMemory[0] = area.handle();
             p.userdOffset[0] = offset + ENTRIES as u64 * 8;
-            let ch = rm_alloc(&gpu.ctl, gpu.root, group, AMPERE_CHANNEL_GPFIFO_A, Some(&mut p))?;
+            let ch = rm_alloc(
+                &gpu.ctl,
+                gpu.root,
+                group,
+                AMPERE_CHANNEL_GPFIFO_A,
+                Some(&mut p),
+            )?;
             rm_alloc::<()>(&gpu.ctl, gpu.root, ch, compute_class, None)?;
             rm_alloc::<()>(&gpu.ctl, gpu.root, ch, copy_class, None)?;
-            let mut t = NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS { workSubmitToken: u32::MAX };
-            rm_control(&gpu.ctl, gpu.root, ch, NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN, &mut t)?;
+            let mut t = NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS {
+                workSubmitToken: u32::MAX,
+            };
+            rm_control(
+                &gpu.ctl,
+                gpu.root,
+                ch,
+                NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,
+                &mut t,
+            )?;
             let base = gpu.reserve_va(64 << 20)?;
             gpu.register_channel(ch, base, 64 << 20)?;
             let cpu = area.cpu();
             Ok(Channel {
-                ring: View { ptr: cpu.ptr.wrapping_add(offset as usize), len: ENTRIES as usize * 8 },
-                controls: View { ptr: cpu.ptr.wrapping_add((offset + ENTRIES as u64 * 8) as usize), len: 512 },
+                ring: View {
+                    ptr: cpu.ptr.wrapping_add(offset as usize),
+                    len: ENTRIES as usize * 8,
+                },
+                controls: View {
+                    ptr: cpu.ptr.wrapping_add((offset + ENTRIES as u64 * 8) as usize),
+                    len: 512,
+                },
                 put: 0,
                 token: t.workSubmitToken,
             })
         };
         let compute = channel(0)?;
         let copy = channel(COPY_OFFSET)?;
-        let mut sp = NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS { bEnable: 1, ..Default::default() };
-        rm_control(&gpu.ctl, gpu.root, group, NVA06C_CTRL_CMD_GPFIFO_SCHEDULE, &mut sp)?;
+        let mut sp = NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS {
+            bEnable: 1,
+            ..Default::default()
+        };
+        rm_control(
+            &gpu.ctl,
+            gpu.root,
+            group,
+            NVA06C_CTRL_CMD_GPFIFO_SCHEDULE,
+            &mut sp,
+        )?;
 
         let signals = gpu.alloc(SIGNALS, Mem::Sys)?;
         let arena = gpu.alloc(ARENA, Mem::Sys)?;
-        let doorbell = View { ptr: gpu.usermode.ptr, len: gpu.usermode.len };
-        Ok(Queues { _group: group, _area: area, _notifier: notifier, compute, copy, signals, arena, head: 0, last: 0, doorbell })
+        let doorbell = View {
+            ptr: gpu.usermode.ptr,
+            len: gpu.usermode.len,
+        };
+        Ok(Queues {
+            _group: group,
+            _area: area,
+            _notifier: notifier,
+            compute,
+            copy,
+            signals,
+            arena,
+            head: 0,
+            last: 0,
+            doorbell,
+        })
     }
 
     /// Current timeline value (last completed submission).
@@ -168,7 +243,8 @@ impl Queues {
     pub fn timestamps(&self, value: u64) -> Option<(u64, u64)> {
         let v = self.signals.cpu();
         let o = TS_BASE + (value % TS_SLOTS) as usize * 32;
-        (v.read64(o) == value && v.read64(o + 16) == value).then(|| (v.read64(o + 8), v.read64(o + 24)))
+        (v.read64(o) == value && v.read64(o + 16) == value)
+            .then(|| (v.read64(o + 8), v.read64(o + 24)))
     }
 
     fn arena_alloc(&mut self, size: u64, align: u64) -> Result<u64> {
@@ -186,18 +262,37 @@ impl Queues {
     }
 
     /// Builds and submits one ordered unit of work on `engine`; returns its timeline value.
-    pub fn submit(&mut self, engine: Engine, body: impl FnOnce(&mut Push) -> Result<()>) -> Result<u64> {
+    pub fn submit(
+        &mut self,
+        engine: Engine,
+        body: impl FnOnce(&mut Push) -> Result<()>,
+    ) -> Result<u64> {
         let value = self.last + 1;
         let sem = self.signals.va + SEM_TIMELINE as u64;
         let ts = self.signals.va + TS_BASE as u64 + (value % TS_SLOTS) * 32;
-        let mut p = Push { words: Vec::with_capacity(64), q: self };
+        let mut p = Push {
+            words: Vec::with_capacity(64),
+            q: self,
+        };
         if value > 1 {
             p.semaphore(sem, value - 1, SEM_EXECUTE_ACQ_CIRC_GEQ);
         }
-        p.semaphore(ts, value, SEM_EXECUTE_RELEASE | SEM_EXECUTE_RELEASE_TIMESTAMP);
+        p.semaphore(
+            ts,
+            value,
+            SEM_EXECUTE_RELEASE | SEM_EXECUTE_RELEASE_TIMESTAMP,
+        );
         body(&mut p)?;
-        p.semaphore(ts + 16, value, SEM_EXECUTE_RELEASE | SEM_EXECUTE_RELEASE_WFI | SEM_EXECUTE_RELEASE_TIMESTAMP);
-        p.semaphore(sem, value, SEM_EXECUTE_RELEASE | SEM_EXECUTE_RELEASE_WFI | SEM_EXECUTE_RELEASE_TIMESTAMP);
+        p.semaphore(
+            ts + 16,
+            value,
+            SEM_EXECUTE_RELEASE | SEM_EXECUTE_RELEASE_WFI | SEM_EXECUTE_RELEASE_TIMESTAMP,
+        );
+        p.semaphore(
+            sem,
+            value,
+            SEM_EXECUTE_RELEASE | SEM_EXECUTE_RELEASE_WFI | SEM_EXECUTE_RELEASE_TIMESTAMP,
+        );
         p.method(0, NVC56F_NON_STALL_INTERRUPT, &[0]);
         let words = core::mem::take(&mut p.words);
         let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
@@ -234,16 +329,38 @@ impl Queues {
     }
 
     /// Binds the classes and sets up shader windows and local memory.
-    pub fn init(&mut self, compute_class: u32, copy_class: u32, local: (u64, u64), windows: (u64, u64)) -> Result<()> {
+    pub fn init(
+        &mut self,
+        compute_class: u32,
+        copy_class: u32,
+        local: (u64, u64),
+        windows: (u64, u64),
+    ) -> Result<()> {
         let (local_va, per_tpc) = local;
         let (shared_window, local_window) = windows;
         self.submit(Engine::Compute, |p| {
             p.method(SUBC_COMPUTE, NVC7C0_SET_OBJECT, &[compute_class]);
-            p.method(SUBC_COMPUTE, NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A, &data64(local_window));
-            p.method(SUBC_COMPUTE, NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A, &data64(shared_window));
-            p.method(SUBC_COMPUTE, NVC7C0_SET_SHADER_LOCAL_MEMORY_A, &data64(local_va));
+            p.method(
+                SUBC_COMPUTE,
+                NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A,
+                &data64(local_window),
+            );
+            p.method(
+                SUBC_COMPUTE,
+                NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A,
+                &data64(shared_window),
+            );
+            p.method(
+                SUBC_COMPUTE,
+                NVC7C0_SET_SHADER_LOCAL_MEMORY_A,
+                &data64(local_va),
+            );
             let [hi, lo] = data64(per_tpc);
-            p.method(SUBC_COMPUTE, NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A, &[hi, lo, 0xff]);
+            p.method(
+                SUBC_COMPUTE,
+                NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A,
+                &[hi, lo, 0xff],
+            );
             Ok(())
         })?;
         self.submit(Engine::Copy, |p| {
@@ -267,4 +384,3 @@ impl Queues {
         }
     }
 }
-

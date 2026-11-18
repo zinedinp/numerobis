@@ -19,7 +19,10 @@ pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<i32>> {
             }
             v.into_iter().map(i32::from).collect()
         }
-        Format::Int { bits, signed: false } => {
+        Format::Int {
+            bits,
+            signed: false,
+        } => {
             let mut v = vec![0u8; len];
             match bits {
                 4 => unpack_uint::<4>(b, &mut v),
@@ -41,12 +44,30 @@ pub fn encode(fmt: Format, src: &[i32]) -> Option<Vec<u8>> {
         Format::I32 => out.copy_from_slice(as_bytes(src)),
         Format::I8 => out.copy_from_slice(as_bytes(&s8)),
         Format::U8 => out.copy_from_slice(&u8s),
-        Format::Int { bits: 4, signed: true } => pack_int::<4>(&s8, &mut out),
-        Format::Int { bits: 2, signed: true } => pack_int::<2>(&s8, &mut out),
-        Format::Int { bits: 1, signed: true } => pack_int::<1>(&s8, &mut out),
-        Format::Int { bits: 4, signed: false } => pack_uint::<4>(&u8s, &mut out),
-        Format::Int { bits: 2, signed: false } => pack_uint::<2>(&u8s, &mut out),
-        Format::Int { bits: 1, signed: false } => pack_uint::<1>(&u8s, &mut out),
+        Format::Int {
+            bits: 4,
+            signed: true,
+        } => pack_int::<4>(&s8, &mut out),
+        Format::Int {
+            bits: 2,
+            signed: true,
+        } => pack_int::<2>(&s8, &mut out),
+        Format::Int {
+            bits: 1,
+            signed: true,
+        } => pack_int::<1>(&s8, &mut out),
+        Format::Int {
+            bits: 4,
+            signed: false,
+        } => pack_uint::<4>(&u8s, &mut out),
+        Format::Int {
+            bits: 2,
+            signed: false,
+        } => pack_uint::<2>(&u8s, &mut out),
+        Format::Int {
+            bits: 1,
+            signed: false,
+        } => pack_uint::<1>(&u8s, &mut out),
         _ => return None,
     }
     Some(out)

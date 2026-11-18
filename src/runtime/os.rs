@@ -30,7 +30,11 @@ impl Fd {
         let c = CString::new(path).map_err(|_| Error::InvalidArgument(path.into()))?;
         // SAFETY: valid NUL-terminated path.
         let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
-        if fd < 0 { Err(Error::Os(errno())) } else { Ok(Fd(fd)) }
+        if fd < 0 {
+            Err(Error::Os(errno()))
+        } else {
+            Ok(Fd(fd))
+        }
     }
 
     /// `ioctl(fd, req, arg)`; `EINTR`/`EAGAIN` are retried.
@@ -131,10 +135,21 @@ impl core::ops::Deref for Map {
 
 impl Map {
     /// `mmap(addr, len, prot, flags, fd, off)`. `addr` is a hint unless `flags` has `MAP_FIXED`.
-    pub(crate) fn new(addr: usize, len: usize, prot: i32, flags: i32, fd: i32, off: u64) -> Result<Map> {
+    pub(crate) fn new(
+        addr: usize,
+        len: usize,
+        prot: i32,
+        flags: i32,
+        fd: i32,
+        off: u64,
+    ) -> Result<Map> {
         // SAFETY: plain mmap; MAP_FIXED callers own the target range.
         let p = unsafe { libc::mmap(addr as *mut _, len, prot, flags, fd, off as libc::off_t) };
-        if p == libc::MAP_FAILED { Err(Error::Os(errno())) } else { Ok(Map(View { ptr: p.cast(), len })) }
+        if p == libc::MAP_FAILED {
+            Err(Error::Os(errno()))
+        } else {
+            Ok(Map(View { ptr: p.cast(), len }))
+        }
     }
 
     /// Leaks the mapping (the range stays mapped, e.g. when MAP_FIXED over a reservation).

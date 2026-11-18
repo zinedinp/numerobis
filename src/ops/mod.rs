@@ -50,15 +50,15 @@ pub mod quantize;
 pub mod reduce;
 pub mod resize;
 
+pub use crate::runtime::backend::ResizeMode;
+pub use act::{Act, act};
+pub use conv::{Conv2dShape, conv2d};
 pub use convert::convert;
 pub use gemm::{GemmShape, gemm};
 pub use int::{pack, unpack};
 pub use quantize::{dequantize, quantize};
-pub use act::{Act, act};
-pub use conv::{Conv2dShape, conv2d};
 pub use reduce::absmax_block;
 pub use resize::resize;
-pub use crate::runtime::backend::ResizeMode;
 
 use crate::elem::Elem;
 use crate::runtime::backend::{Arg, KernelKey, OpSig};
@@ -94,7 +94,11 @@ pub(crate) fn key(s: &Stream, choice: Choice, sig: OpSig, batched: bool) -> Resu
     if s.device().backend().supports(&key) {
         Ok(key)
     } else {
-        Err(Error::Unsupported(format!("{} on tier {}", key.name, tier.name())))
+        Err(Error::Unsupported(format!(
+            "{} on tier {}",
+            key.name,
+            tier.name()
+        )))
     }
 }
 
@@ -112,7 +116,12 @@ pub(crate) fn unary<F: Elem, T: Elem>(
     extra: Option<Arg>,
 ) -> Result<Pending<()>> {
     if src.len() != dst.len() {
-        return Err(invalid(format!("{}: {} elements into {}", sig.name(false), src.len(), dst.len())));
+        return Err(invalid(format!(
+            "{}: {} elements into {}",
+            sig.name(false),
+            src.len(),
+            dst.len()
+        )));
     }
     unary_args(s, choice, sig, src, dst, extra.as_slice())
 }
@@ -127,10 +136,19 @@ pub(crate) fn unary_args<F: Elem, T: Elem>(
     extra: &[Arg],
 ) -> Result<Pending<()>> {
     if src.len() != dst.len() {
-        return Err(invalid(format!("{}: {} elements into {}", sig.name(false), src.len(), dst.len())));
+        return Err(invalid(format!(
+            "{}: {} elements into {}",
+            sig.name(false),
+            src.len(),
+            dst.len()
+        )));
     }
     let k = key(s, choice, sig, false)?;
-    let mut args = vec![Arg::Buf(src.raw.id), Arg::Buf(dst.raw.id), Arg::U32(len_u32(src.len())?)];
+    let mut args = vec![
+        Arg::Buf(src.raw.id),
+        Arg::Buf(dst.raw.id),
+        Arg::U32(len_u32(src.len())?),
+    ];
     args.extend_from_slice(extra);
     s.launch(&k, &[&src.raw], &[&dst.raw], &args)
 }

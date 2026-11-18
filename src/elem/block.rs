@@ -10,16 +10,22 @@ use super::{Elem, Format, sealed};
 /// Block formats; [`ops::dequantize`](crate::ops::dequantize) turns them into `F32`.
 pub trait BlockElem: Elem {}
 
-/// Block formats with an encoder; [`ops::quantize`](crate::ops::quantize) produces them
+/// Block formats with an encoder; [`ops::quantize`](fn@crate::ops::quantize) produces them
 /// from `F32`. GGUF is decode-only, as in miraculix.
 pub trait Quantize: BlockElem {}
 
-elem!(/// NVFP4: E2M1 in 16-element blocks with E4M3 scales and an `f32` tensor scale.
-    Nvfp4 = Format::Nvfp4);
-elem!(/// GGUF `Q8_0` (decode only).
-    Q8_0 = Format::Q8_0);
-elem!(/// GGUF `Q6_K` (decode only).
-    Q6K = Format::Q6K);
+elem!(
+    /// NVFP4: E2M1 in 16-element blocks with E4M3 scales and an `f32` tensor scale.
+    Nvfp4 = Format::Nvfp4
+);
+elem!(
+    /// GGUF `Q8_0` (decode only).
+    Q8_0 = Format::Q8_0
+);
+elem!(
+    /// GGUF `Q6_K` (decode only).
+    Q6K = Format::Q6K
+);
 impl BlockElem for Nvfp4 {}
 impl Quantize for Nvfp4 {}
 impl BlockElem for Q8_0 {}

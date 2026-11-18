@@ -1,7 +1,7 @@
 //! `auto_up`: run every op on the best tier the device has a kernel for.
 
-use crate::runtime::backend::{KernelKey, OpSig};
 use crate::runtime::Device;
+use crate::runtime::backend::{KernelKey, OpSig};
 use crate::runtime::error::{Error, Result};
 use crate::tiers::Tier;
 
@@ -20,9 +20,19 @@ pub fn choose_with(dev: &Device, sig: OpSig, batched: bool, bit_exact: bool) -> 
         .rev()
         .copied()
         .filter(|&tier| !bit_exact || sig.exact_on(tier))
-        .find(|&tier| dev.backend().supports(&KernelKey { name: name.clone(), sig, tier }))
+        .find(|&tier| {
+            dev.backend().supports(&KernelKey {
+                name: name.clone(),
+                sig,
+                tier,
+            })
+        })
         .ok_or_else(|| {
-            let how = if bit_exact { " (bit-exact tiers only)" } else { "" };
+            let how = if bit_exact {
+                " (bit-exact tiers only)"
+            } else {
+                ""
+            };
             Error::Unsupported(format!("{name} on {}{how}", dev.features().name))
         })
 }

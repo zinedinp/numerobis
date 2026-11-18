@@ -43,13 +43,26 @@ pub enum OpSig {
     /// Per-block max of `|x|`. Args: `[src, dst, len: U32, block: U32]`.
     AbsmaxBlock { src: Format },
     /// Element-wise activation. Args: `[src, dst, len: U32, p0: F32, p1: F32]`.
-    Act { src: Format, dst: Format, act: ActKind },
+    Act {
+        src: Format,
+        dst: Format,
+        act: ActKind,
+    },
     /// Direct 2-D convolution, NCHW / KCRS / NKPQ.
     /// Args: `[x, w, bias (F32, or x when absent), y, params (U32 buffer, `conv::PARAM_WORDS`)]`.
-    Conv2d { x: Format, w: Format, y: Format, bias: bool },
+    Conv2d {
+        x: Format,
+        w: Format,
+        y: Format,
+        bias: bool,
+    },
     /// Image resize of `planes` HxW planes to HoxWo.
     /// Args: `[src, dst, planes, h, w, ho, wo: U32]`.
-    Resize { src: Format, dst: Format, mode: ResizeMode },
+    Resize {
+        src: Format,
+        dst: Format,
+        mode: ResizeMode,
+    },
 }
 
 /// Activation function of [`OpSig::Act`] (parameters travel as arguments).
@@ -130,11 +143,21 @@ impl OpSig {
                 format!("{p}_{}_{}_{}", a.name(), b.name(), acc.name())
             }
             OpSig::AbsmaxBlock { src } => format!("absmax_block_{}", src.name()),
-            OpSig::Act { src, dst, act } => format!("act_{}_{}_{}", act.name(), src.name(), dst.name()),
-            OpSig::Conv2d { x, w, y, bias } => {
-                format!("conv2d{}_{}_{}_{}", if bias { "_bias" } else { "" }, x.name(), w.name(), y.name())
+            OpSig::Act { src, dst, act } => {
+                format!("act_{}_{}_{}", act.name(), src.name(), dst.name())
             }
-            OpSig::Resize { src, dst, mode } => format!("resize_{}_{}_{}", mode.name(), src.name(), dst.name()),
+            OpSig::Conv2d { x, w, y, bias } => {
+                format!(
+                    "conv2d{}_{}_{}_{}",
+                    if bias { "_bias" } else { "" },
+                    x.name(),
+                    w.name(),
+                    y.name()
+                )
+            }
+            OpSig::Resize { src, dst, mode } => {
+                format!("resize_{}_{}_{}", mode.name(), src.name(), dst.name())
+            }
         }
     }
 
@@ -232,11 +255,17 @@ pub trait Backend: Send + Sync + 'static {
 
     /// Exports the buffer as a dma-buf (DRM PRIME, udmabuf, tt-kmd TLB export).
     fn export_dmabuf(&self, _id: BufId) -> Result<OwnedFd> {
-        Err(crate::Error::Unsupported(format!("dma-buf export on {}", self.features().name)))
+        Err(crate::Error::Unsupported(format!(
+            "dma-buf export on {}",
+            self.features().name
+        )))
     }
     /// Imports a dma-buf of `bytes` bytes as a buffer of this device, without a copy.
     fn import_dmabuf(&self, _fd: BorrowedFd<'_>, _bytes: usize) -> Result<BufId> {
-        Err(crate::Error::Unsupported(format!("dma-buf import on {}", self.features().name)))
+        Err(crate::Error::Unsupported(format!(
+            "dma-buf import on {}",
+            self.features().name
+        )))
     }
     /// A kernel `sync_file` for `fence`, if the driver has dma-fences (DRM
     /// drivers). `None`: the runtime bridges through a DRM timeline syncobj.

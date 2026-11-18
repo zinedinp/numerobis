@@ -2,7 +2,7 @@
 //! the host with the miraculix codecs, synchronously. It is the oracle for
 //! every real tier.
 //!
-//! [`codec`] is split by format kind, [`kernels`] by op kind.
+//! [`codec`] is split by format kind, `kernels` by op kind.
 
 pub mod codec;
 mod kernels;
@@ -122,8 +122,13 @@ impl Backend for MockBackend {
 
     fn upload(&self, id: BufId, offset: usize, src: &[u8]) -> Result<Fence> {
         let mut s = self.lock();
-        let b = s.mem.get_mut(&id.0).ok_or_else(|| invalid("unknown buffer"))?;
-        b.get_mut(offset..offset + src.len()).ok_or_else(|| invalid("upload out of range"))?.copy_from_slice(src);
+        let b = s
+            .mem
+            .get_mut(&id.0)
+            .ok_or_else(|| invalid("unknown buffer"))?;
+        b.get_mut(offset..offset + src.len())
+            .ok_or_else(|| invalid("upload out of range"))?
+            .copy_from_slice(src);
         s.push();
         Ok(s.fence())
     }
@@ -132,20 +137,29 @@ impl Backend for MockBackend {
         let mut s = self.lock();
         s.pull();
         let b = s.mem.get(&id.0).ok_or_else(|| invalid("unknown buffer"))?;
-        let data = b.get(offset..offset + len).ok_or_else(|| invalid("download out of range"))?.to_vec();
+        let data = b
+            .get(offset..offset + len)
+            .ok_or_else(|| invalid("download out of range"))?
+            .to_vec();
         let f = s.fence();
         s.downloads.insert(f.0, data);
         Ok(f)
     }
 
     fn take_download(&self, fence: Fence, dst: &mut [u8]) -> Result<()> {
-        let data = self.lock().downloads.remove(&fence.0).ok_or_else(|| invalid("no such download"))?;
+        let data = self
+            .lock()
+            .downloads
+            .remove(&fence.0)
+            .ok_or_else(|| invalid("no such download"))?;
         dst.copy_from_slice(&data);
         Ok(())
     }
 
     fn supports(&self, key: &KernelKey) -> bool {
-        self.kernel_tiers.contains(&key.tier) && self.features.tiers.contains(&key.tier) && kernels::supported(key.sig)
+        self.kernel_tiers.contains(&key.tier)
+            && self.features.tiers.contains(&key.tier)
+            && kernels::supported(key.sig)
     }
 
     fn load_kernel(&self, key: &KernelKey) -> Result<KernelId> {
@@ -159,7 +173,10 @@ impl Backend for MockBackend {
 
     fn dispatch(&self, kernel: KernelId, args: &[Arg]) -> Result<Fence> {
         let mut s = self.lock();
-        let sig = *s.kernels.get(kernel.0 as usize).ok_or_else(|| invalid("unknown kernel"))?;
+        let sig = *s
+            .kernels
+            .get(kernel.0 as usize)
+            .ok_or_else(|| invalid("unknown kernel"))?;
         let t = Instant::now();
         s.pull();
         kernels::run(&mut s.mem, sig, args)?;
@@ -184,9 +201,16 @@ impl Backend for MockBackend {
         use crate::runtime::dmabuf::{HostMapping, host_dmabuf};
         let mut s = self.lock();
         if let Some(m) = s.shared.get(&id.0) {
-            return m.fd().try_clone_to_owned().map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)));
+            return m
+                .fd()
+                .try_clone_to_owned()
+                .map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)));
         }
-        let data = s.mem.get(&id.0).ok_or_else(|| invalid("unknown buffer"))?.clone();
+        let data = s
+            .mem
+            .get(&id.0)
+            .ok_or_else(|| invalid("unknown buffer"))?
+            .clone();
         let (fd, _) = host_dmabuf(data.len())?;
         let m = HostMapping::new(std::os::fd::AsFd::as_fd(&fd), data.len())?;
         m.write(&data);

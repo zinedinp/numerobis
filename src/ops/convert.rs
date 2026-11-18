@@ -23,5 +23,15 @@ pub fn convert<F: FloatElem, T: FloatElem>(
         Overflow::Saturate => 0,
         _ => 1,
     };
-    unary(s, choice, OpSig::Convert { from: F::FORMAT, to: T::FORMAT }, src, dst, Some(Arg::U32(ov)))
+    unary(
+        s,
+        choice,
+        OpSig::Convert {
+            from: F::FORMAT,
+            to: T::FORMAT,
+        },
+        src,
+        dst,
+        Some(Arg::U32(ov)),
+    )
 }

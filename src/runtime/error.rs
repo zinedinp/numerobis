@@ -36,11 +36,17 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Unsupported(s) => write!(f, "unsupported: {s}"),
-            Error::OutOfMemory { requested } => write!(f, "out of device memory ({requested} bytes requested)"),
+            Error::OutOfMemory { requested } => {
+                write!(f, "out of device memory ({requested} bytes requested)")
+            }
             Error::Timeout(d) => write!(f, "timed out after {d:?}"),
             Error::DeviceLost => f.write_str("device lost"),
-            Error::MissingFirmware { package } => write!(f, "missing firmware (install `{package}`)"),
-            Error::DriverTooOld { have, need } => write!(f, "driver too old: have {have}, need {need}"),
+            Error::MissingFirmware { package } => {
+                write!(f, "missing firmware (install `{package}`)")
+            }
+            Error::DriverTooOld { have, need } => {
+                write!(f, "driver too old: have {have}, need {need}")
+            }
             Error::NoDevice => f.write_str("no matching device"),
             Error::InvalidArgument(s) => write!(f, "invalid argument: {s}"),
             Error::BadBinary(s) => write!(f, "bad kernel binary: {s}"),

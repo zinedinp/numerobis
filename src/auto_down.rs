@@ -2,8 +2,8 @@
 //! turn (test matrices, benchmarks). Pass the result to
 //! [`Choice::Down`](crate::Choice::Down).
 
-use crate::runtime::backend::{KernelKey, OpSig};
 use crate::runtime::Device;
+use crate::runtime::backend::{KernelKey, OpSig};
 use crate::tiers::Tier;
 
 /// All tiers of the device that support `sig`, ascending.
@@ -13,6 +13,12 @@ pub fn tiers(dev: &Device, sig: OpSig, batched: bool) -> Vec<Tier> {
         .tiers
         .iter()
         .copied()
-        .filter(|&tier| dev.backend().supports(&KernelKey { name: name.clone(), sig, tier }))
+        .filter(|&tier| {
+            dev.backend().supports(&KernelKey {
+                name: name.clone(),
+                sig,
+                tier,
+            })
+        })
         .collect()
 }

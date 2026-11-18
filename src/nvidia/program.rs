@@ -62,7 +62,9 @@ fn attrs(d: &[u8]) -> Result<Vec<(u8, u8, &[u8])>> {
         let (fmt, attr) = (d[o], d[o + 1]);
         let sz = u16::from_le_bytes([d[o + 2], d[o + 3]]) as usize;
         if fmt == EIFMT_SVAL {
-            let p = d.get(o + 4..o + 4 + sz).ok_or_else(|| bad("truncated .nv.info".into()))?;
+            let p = d
+                .get(o + 4..o + 4 + sz)
+                .ok_or_else(|| bad("truncated .nv.info".into()))?;
             out.push((fmt, attr, p));
             o += 4 + sz;
         } else {
@@ -88,7 +90,9 @@ impl Program {
         for s in &elf.sections {
             let needs_link = s.name == ".nv.global.init"
                 || s.name.starts_with(".nv.constant4")
-                || (s.name.starts_with(".rel") && s.name != ".rel.debug_frame" && s.name != ".rela.debug_frame");
+                || (s.name.starts_with(".rel")
+                    && s.name != ".rel.debug_frame"
+                    && s.name != ".rela.debug_frame");
             if needs_link {
                 return Err(bad(format!("cubin needs linking ({})", s.name)));
             }
@@ -96,7 +100,11 @@ impl Program {
         let mut stack = 0;
         if let Some(info) = elf.section(".nv.info") {
             for (_, a, p) in attrs(info.data)? {
-                if matches!(a, eiattr::FRAME_SIZE | eiattr::MIN_STACK_SIZE | eiattr::MAX_STACK_SIZE) && p.len() >= 8 {
+                if matches!(
+                    a,
+                    eiattr::FRAME_SIZE | eiattr::MIN_STACK_SIZE | eiattr::MAX_STACK_SIZE
+                ) && p.len() >= 8
+                {
                     stack = stack.max(u32le(p, 4));
                 }
             }
@@ -104,8 +112,12 @@ impl Program {
         let mut kernels = Vec::new();
         for s in elf.sections.iter().filter(|s| s.name.starts_with(".text.")) {
             let name = &s.name[".text.".len()..];
-            let Some(info) = elf.section(&format!(".nv.info.{name}")) else { continue };
-            let cbuf0 = elf.section(&format!(".nv.constant0.{name}")).ok_or_else(|| bad(format!("{name}: no constant bank 0")))?;
+            let Some(info) = elf.section(&format!(".nv.info.{name}")) else {
+                continue;
+            };
+            let cbuf0 = elf
+                .section(&format!(".nv.constant0.{name}"))
+                .ok_or_else(|| bad(format!("{name}: no constant bank 0")))?;
             let mut params = None;
             let mut offsets = Vec::new();
             for (_, a, p) in attrs(info.data)? {
@@ -129,8 +141,13 @@ impl Program {
             if offsets.contains(&u32::MAX) {
                 return Err(bad(format!("{name}: parameter ordinals have gaps")));
             }
-            let cbuf2 = elf.section(&format!(".nv.constant2.{name}")).map(|c| (c.offset, c.data.len() as u32));
-            let shared = elf.section(&format!(".nv.shared.{name}")).map(|c| c.size as u32).unwrap_or(0);
+            let cbuf2 = elf
+                .section(&format!(".nv.constant2.{name}"))
+                .map(|c| (c.offset, c.data.len() as u32));
+            let shared = elf
+                .section(&format!(".nv.shared.{name}"))
+                .map(|c| c.size as u32)
+                .unwrap_or(0);
             kernels.push(Kernel {
                 name: name.to_string(),
                 text: (s.offset, s.data.len() as u64),
@@ -155,7 +172,11 @@ mod tests {
     use super::*;
 
     fn cubin(sm: &str) -> Vec<u8> {
-        std::fs::read(format!("{}/kernels/bin/nvidia/{sm}-emulated.cubin", env!("CARGO_MANIFEST_DIR"))).unwrap()
+        std::fs::read(format!(
+            "{}/kernels/bin/nvidia/{sm}-emulated.cubin",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap()
     }
 
     #[test]
@@ -166,21 +187,30 @@ mod tests {
             let p = Program::parse(&cubin(sm)).unwrap_or_else(|e| panic!("{sm}: {e}"));
             for s in crate::runtime::abi::SYMBOLS {
                 let k = p.kernel(s).unwrap_or_else(|| panic!("{sm}: {s}"));
-                assert!(k.registers > 0 && k.registers <= 255, "{sm} {s}: {} registers", k.registers);
+                assert!(
+                    k.registers > 0 && k.registers <= 255,
+                    "{sm} {s}: {} registers",
+                    k.registers
+                );
                 assert!(k.params.0 + k.params.1 <= k.cbuf0_size);
             }
             // nb_gemm_f(a, b, c, m, n, k, batch, alpha, beta, fa, fb, fc, sa, sb):
             // three pointers, then eleven 32-bit values, naturally aligned.
             let g = p.kernel("nb_gemm_f").unwrap();
             assert_eq!(g.params, (0x160, 3 * 8 + 11 * 4), "{sm}");
-            let want: Vec<u32> = (0..14).map(|i| if i < 3 { i * 8 } else { 24 + (i - 3) * 4 }).collect();
+            let want: Vec<u32> = (0..14)
+                .map(|i| if i < 3 { i * 8 } else { 24 + (i - 3) * 4 })
+                .collect();
             assert_eq!(g.param_offsets, want, "{sm}");
         }
     }
 
     #[test]
     fn rejects_cubins_that_need_linking() {
-        assert!(matches!(Program::parse(&cubin("sm_90")), Err(Error::BadBinary(_))));
+        assert!(matches!(
+            Program::parse(&cubin("sm_90")),
+            Err(Error::BadBinary(_))
+        ));
     }
 
     #[test]

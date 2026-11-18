@@ -1,4 +1,4 @@
-//! F32, TF32 and [`MiniFloat`] codes (byte-aligned or packed LSB-first).
+//! F32, TF32 and [`MiniFloat`](miraculix::formats::MiniFloat) codes (byte-aligned or packed LSB-first).
 
 use miraculix::formats::{Overflow, round_to_tf32};
 
@@ -31,7 +31,9 @@ pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<f32>> {
         Format::Float(f) if f.bits() == 8 => f.decode_u8_slice(b, &mut out),
         Format::Float(f) => {
             let w = f.bits() as usize;
-            out.iter_mut().enumerate().for_each(|(i, o)| *o = f.decode(get_bits(b, i, w)));
+            out.iter_mut()
+                .enumerate()
+                .for_each(|(i, o)| *o = f.decode(get_bits(b, i, w)));
         }
         _ => return None,
     }
@@ -55,7 +57,9 @@ pub fn encode(fmt: Format, src: &[f32], overflow: Overflow) -> Option<Vec<u8>> {
         Format::Float(f) if f.bits() == 8 => f.encode_u8_slice(src, &mut out, overflow),
         Format::Float(f) => {
             let w = f.bits() as usize;
-            src.iter().enumerate().for_each(|(i, &x)| put_bits(&mut out, i, w, f.encode(x, overflow)));
+            src.iter()
+                .enumerate()
+                .for_each(|(i, &x)| put_bits(&mut out, i, w, f.encode(x, overflow)));
         }
         _ => return None,
     }

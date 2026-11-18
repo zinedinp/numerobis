@@ -121,7 +121,7 @@ impl Conv2dShape {
 /// `conv2d[_bias]_<x>_<w>_<y>`: direct convolution, F32 accumulation in the
 /// fixed order (c, r, s), optional F32 bias per output channel and an optional
 /// fused activation (`Relu`, `Sigmoid`, `Tanh`, `Silu`, `Gelu`, `Exp`; the
-/// parametrised ones are rejected here, run [`act`](crate::ops::act) after).
+/// parametrised ones are rejected here, run [`act`](fn@crate::ops::act) after).
 ///
 /// The parameter block is uploaded once per call; inside a recorded
 /// [`CommandList`](crate::CommandList) it is recorded with the launch.

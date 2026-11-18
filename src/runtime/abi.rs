@@ -41,7 +41,8 @@ pub const SYMBOLS: [&str; 11] = [
 /// Element-wise float formats the image ops read and write (one element per
 /// byte or more, so work items never share a byte).
 pub fn elementwise_float(f: Format) -> bool {
-    matches!(f, Format::F32 | Format::Tf32) || (matches!(f, Format::Float(_)) && f.block() == 1 && f.storage_bytes(1).is_some())
+    matches!(f, Format::F32 | Format::Tf32)
+        || (matches!(f, Format::Float(_)) && f.block() == 1 && f.storage_bytes(1).is_some())
 }
 
 /// Which signatures the shared Emulated kernels implement (every SIMT
@@ -59,8 +60,12 @@ pub fn supported(sig: OpSig) -> bool {
             _ => false,
         },
         OpSig::AbsmaxBlock { src } => !src.is_integer(),
-        OpSig::Act { src, dst, .. } | OpSig::Resize { src, dst, .. } => elementwise_float(src) && elementwise_float(dst),
-        OpSig::Conv2d { x, w, y, .. } => elementwise_float(x) && elementwise_float(w) && elementwise_float(y),
+        OpSig::Act { src, dst, .. } | OpSig::Resize { src, dst, .. } => {
+            elementwise_float(src) && elementwise_float(dst)
+        }
+        OpSig::Conv2d { x, w, y, .. } => {
+            elementwise_float(x) && elementwise_float(w) && elementwise_float(y)
+        }
         #[allow(unreachable_patterns)]
         _ => false,
     }
@@ -95,7 +100,11 @@ pub fn lower(sig: OpSig, args: &[Arg]) -> Result<Vec<Launch>> {
 }
 
 fn launch(symbol: &'static str, args: Vec<Arg>, n: usize) -> Option<Launch> {
-    Some(Launch { symbol, args, items: items(n)? })
+    Some(Launch {
+        symbol,
+        args,
+        items: items(n)?,
+    })
 }
 
 fn lower_opt(sig: OpSig, a: &[Arg]) -> Option<Vec<Launch>> {
@@ -108,14 +117,33 @@ fn lower_opt(sig: OpSig, a: &[Arg]) -> Option<Vec<Launch>> {
             let len = len?;
             let group = from.block().max(to.block());
             let sat = Arg::U32((u(a, 3)? == 0) as u32);
-            let args = vec![src, dst, Arg::U32(len as u32), sat, Arg::U32(from.desc()), Arg::U32(to.desc()), u32a(group)?];
+            let args = vec![
+                src,
+                dst,
+                Arg::U32(len as u32),
+                sat,
+                Arg::U32(from.desc()),
+                Arg::U32(to.desc()),
+                u32a(group)?,
+            ];
             vec![launch("nb_convert", args, len / group)?]
         }
         OpSig::Pack { to } | OpSig::Unpack { from: to } => {
             let len = len?;
-            let (from, to) = if matches!(sig, OpSig::Pack { .. }) { (wide(to), to) } else { (to, wide(to)) };
+            let (from, to) = if matches!(sig, OpSig::Pack { .. }) {
+                (wide(to), to)
+            } else {
+                (to, wide(to))
+            };
             let group = from.block().max(to.block());
-            let args = vec![src, dst, Arg::U32(len as u32), Arg::U32(from.desc()), Arg::U32(to.desc()), u32a(group)?];
+            let args = vec![
+                src,
+                dst,
+                Arg::U32(len as u32),
+                Arg::U32(from.desc()),
+                Arg::U32(to.desc()),
+                u32a(group)?,
+            ];
             vec![launch("nb_int_convert", args, len / group)?]
         }
         OpSig::Quantize { to } => {
@@ -124,19 +152,40 @@ fn lower_opt(sig: OpSig, a: &[Arg]) -> Option<Vec<Launch>> {
             let mut v = Vec::new();
             if to == Format::Nvfp4 {
                 let ts_off = soff + len / to.block();
-                v.push(launch("nb_nvfp4_tensor_scale", vec![src, dst, Arg::U32(len as u32), u32a(ts_off)?], 1)?);
+                v.push(launch(
+                    "nb_nvfp4_tensor_scale",
+                    vec![src, dst, Arg::U32(len as u32), u32a(ts_off)?],
+                    1,
+                )?);
             }
-            let args = vec![src, dst, Arg::U32(len as u32), Arg::U32(to.desc()), u32a(soff)?];
+            let args = vec![
+                src,
+                dst,
+                Arg::U32(len as u32),
+                Arg::U32(to.desc()),
+                u32a(soff)?,
+            ];
             v.push(launch("nb_quantize", args, len / to.block())?);
             v
         }
         OpSig::Dequantize { from } => {
             let len = len?;
-            let args = vec![src, dst, Arg::U32(len as u32), Arg::U32(from.desc()), u32a(from.scale_offset(len))?];
+            let args = vec![
+                src,
+                dst,
+                Arg::U32(len as u32),
+                Arg::U32(from.desc()),
+                u32a(from.scale_offset(len))?,
+            ];
             vec![launch("nb_dequantize", args, len / from.block())?]
         }
         OpSig::Gemm { a: fa, b: fb, acc } => {
-            let (m, n, k, batch) = (u(a, 3)? as usize, u(a, 4)? as usize, u(a, 5)? as usize, u(a, 6)? as usize);
+            let (m, n, k, batch) = (
+                u(a, 3)? as usize,
+                u(a, 4)? as usize,
+                u(a, 5)? as usize,
+                u(a, 6)? as usize,
+            );
             let mut args = a.get(..9)?.to_vec();
             args.extend([
                 Arg::U32(fa.desc()),
@@ -145,30 +194,67 @@ fn lower_opt(sig: OpSig, a: &[Arg]) -> Option<Vec<Launch>> {
                 u32a(fa.scale_offset(batch * m * k))?,
                 u32a(fb.scale_offset(batch * n * k))?,
             ]);
-            let sym = if acc == Format::I32 { "nb_gemm_i" } else { "nb_gemm_f" };
+            let sym = if acc == Format::I32 {
+                "nb_gemm_i"
+            } else {
+                "nb_gemm_f"
+            };
             vec![launch(sym, args, batch * m * n)?]
         }
         OpSig::AbsmaxBlock { src: f } => {
             let len = len?;
             let block = u(a, 3)? as usize;
-            let args = vec![src, dst, Arg::U32(len as u32), Arg::U32(block as u32), Arg::U32(f.desc()), u32a(f.scale_offset(len))?];
+            let args = vec![
+                src,
+                dst,
+                Arg::U32(len as u32),
+                Arg::U32(block as u32),
+                Arg::U32(f.desc()),
+                u32a(f.scale_offset(len))?,
+            ];
             vec![launch("nb_absmax_block", args, len / block.max(1))?]
         }
-        OpSig::Act { src: fs, dst: fd, act } => {
+        OpSig::Act {
+            src: fs,
+            dst: fd,
+            act,
+        } => {
             let len = len?;
-            let args = vec![src, dst, Arg::U32(len as u32), Arg::U32(act.code()), *a.get(3)?, *a.get(4)?, Arg::U32(fs.desc()), Arg::U32(fd.desc())];
+            let args = vec![
+                src,
+                dst,
+                Arg::U32(len as u32),
+                Arg::U32(act.code()),
+                *a.get(3)?,
+                *a.get(4)?,
+                Arg::U32(fs.desc()),
+                Arg::U32(fd.desc()),
+            ];
             vec![launch("nb_act", args, len)?]
         }
         OpSig::Conv2d { x, w, y, bias } => {
             let outputs = u(a, 5)? as usize;
             let mut args = a.get(..5)?.to_vec();
-            args.extend([Arg::U32(x.desc()), Arg::U32(w.desc()), Arg::U32(y.desc()), Arg::U32(bias as u32)]);
+            args.extend([
+                Arg::U32(x.desc()),
+                Arg::U32(w.desc()),
+                Arg::U32(y.desc()),
+                Arg::U32(bias as u32),
+            ]);
             vec![launch("nb_conv2d", args, outputs)?]
         }
-        OpSig::Resize { src: fs, dst: fd, mode } => {
+        OpSig::Resize {
+            src: fs,
+            dst: fd,
+            mode,
+        } => {
             let (planes, ho, wo) = (u(a, 2)? as usize, u(a, 5)? as usize, u(a, 6)? as usize);
             let mut args = a.get(..7)?.to_vec();
-            args.extend([Arg::U32(mode.code()), Arg::U32(fs.desc()), Arg::U32(fd.desc())]);
+            args.extend([
+                Arg::U32(mode.code()),
+                Arg::U32(fs.desc()),
+                Arg::U32(fd.desc()),
+            ]);
             vec![launch("nb_resize", args, planes * ho * wo)?]
         }
         #[allow(unreachable_patterns)]

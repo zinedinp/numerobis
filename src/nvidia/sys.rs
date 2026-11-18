@@ -12,8 +12,8 @@
 
 #![allow(non_camel_case_types, non_snake_case, dead_code)]
 
-use crate::runtime::os::{Fd, iowr};
 use crate::runtime::error::{Error, Result};
+use crate::runtime::os::{Fd, iowr};
 
 /// Driver versions whose headers these layouts were checked against.
 pub const TESTED_DRIVERS: &[&str] = &["620.70.06"];
@@ -628,7 +628,8 @@ sized!(
     UVM_MAP_EXTERNAL_ALLOCATION_PARAMS = 9264,
     UVM_FREE_PARAMS = 16,
 );
-const _: () = assert!(core::mem::offset_of!(UVM_MAP_EXTERNAL_ALLOCATION_PARAMS, gpuAttributesCount) == 9240);
+const _: () =
+    assert!(core::mem::offset_of!(UVM_MAP_EXTERNAL_ALLOCATION_PARAMS, gpuAttributesCount) == 9240);
 const _: () = assert!(core::mem::offset_of!(UVM_REGISTER_GPU_PARAMS, rmCtrlFd) == 24);
 const _: () = assert!(core::mem::offset_of!(UVM_REGISTER_CHANNEL_PARAMS, base) == 32);
 
@@ -645,7 +646,9 @@ pub const NV_ERR_NOT_SUPPORTED: u32 = 0x56;
 pub fn status(what: &str, st: u32) -> Result<()> {
     match st {
         NV_OK => Ok(()),
-        NV_ERR_NO_MEMORY | NV_ERR_INSUFFICIENT_RESOURCES => Err(Error::OutOfMemory { requested: 0 }),
+        NV_ERR_NO_MEMORY | NV_ERR_INSUFFICIENT_RESOURCES => {
+            Err(Error::OutOfMemory { requested: 0 })
+        }
         NV_ERR_NOT_SUPPORTED => Err(Error::Unsupported(format!("{what}: NV_ERR_NOT_SUPPORTED"))),
         _ => Err(Error::Unsupported(format!("{what}: NV status {st:#x}"))),
     }
@@ -659,8 +662,13 @@ pub fn status(what: &str, st: u32) -> Result<()> {
 /// `T` must be the parameter struct of escape `nr`.
 pub unsafe fn rm_escape<T>(fd: &Fd, nr: u8, p: &mut T) -> Result<()> {
     let req = match nr {
-        NV_ESC_RM_ALLOC_MEMORY | NV_ESC_RM_FREE | NV_ESC_RM_CONTROL | NV_ESC_RM_ALLOC | NV_ESC_RM_MAP_MEMORY
-        | NV_ESC_CARD_INFO | NV_ESC_REGISTER_FD => iowr::<T>(NV_IOCTL_MAGIC, nr),
+        NV_ESC_RM_ALLOC_MEMORY
+        | NV_ESC_RM_FREE
+        | NV_ESC_RM_CONTROL
+        | NV_ESC_RM_ALLOC
+        | NV_ESC_RM_MAP_MEMORY
+        | NV_ESC_CARD_INFO
+        | NV_ESC_REGISTER_FD => iowr::<T>(NV_IOCTL_MAGIC, nr),
         _ => return Err(Error::InvalidArgument(format!("unknown RM escape {nr:#x}"))),
     };
     // SAFETY: forwarded to the caller.
@@ -668,12 +676,25 @@ pub unsafe fn rm_escape<T>(fd: &Fd, nr: u8, p: &mut T) -> Result<()> {
 }
 
 /// `NV_ESC_RM_ALLOC` with class parameters `params` (or none).
-pub fn rm_alloc<P>(ctl: &Fd, client: NvHandle, parent: NvHandle, class: u32, params: Option<&mut P>) -> Result<NvHandle> {
+pub fn rm_alloc<P>(
+    ctl: &Fd,
+    client: NvHandle,
+    parent: NvHandle,
+    class: u32,
+    params: Option<&mut P>,
+) -> Result<NvHandle> {
     let (ptr, size) = match params {
         Some(p) => (p as *mut P as u64, size_of::<P>() as u32),
         None => (0, 0),
     };
-    let mut a = NVOS21_PARAMETERS { hRoot: client, hObjectParent: parent, hClass: class, pAllocParms: ptr, paramsSize: size, ..Default::default() };
+    let mut a = NVOS21_PARAMETERS {
+        hRoot: client,
+        hObjectParent: parent,
+        hClass: class,
+        pAllocParms: ptr,
+        paramsSize: size,
+        ..Default::default()
+    };
     // SAFETY: NVOS21 for NV_ESC_RM_ALLOC; params outlive the call.
     unsafe { rm_escape(ctl, NV_ESC_RM_ALLOC, &mut a)? };
     status(&format!("alloc class {class:#x}"), a.status)?;
@@ -681,7 +702,13 @@ pub fn rm_alloc<P>(ctl: &Fd, client: NvHandle, parent: NvHandle, class: u32, par
 }
 
 /// `NV_ESC_RM_CONTROL`.
-pub fn rm_control<P>(ctl: &Fd, client: NvHandle, object: NvHandle, cmd: u32, params: &mut P) -> Result<()> {
+pub fn rm_control<P>(
+    ctl: &Fd,
+    client: NvHandle,
+    object: NvHandle,
+    cmd: u32,
+    params: &mut P,
+) -> Result<()> {
     let mut a = NVOS54_PARAMETERS {
         hClient: client,
         hObject: object,
@@ -697,7 +724,12 @@ pub fn rm_control<P>(ctl: &Fd, client: NvHandle, object: NvHandle, cmd: u32, par
 
 /// `NV_ESC_RM_FREE`.
 pub fn rm_free(ctl: &Fd, client: NvHandle, parent: NvHandle, object: NvHandle) -> Result<()> {
-    let mut a = NVOS00_PARAMETERS { hRoot: client, hObjectParent: parent, hObjectOld: object, status: 0 };
+    let mut a = NVOS00_PARAMETERS {
+        hRoot: client,
+        hObjectParent: parent,
+        hObjectOld: object,
+        status: 0,
+    };
     // SAFETY: NVOS00 for NV_ESC_RM_FREE.
     unsafe { rm_escape(ctl, NV_ESC_RM_FREE, &mut a)? };
     status("free", a.status)

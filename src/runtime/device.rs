@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::runtime::backend::{Backend, KernelId, KernelKey};
 use crate::engine::{DeviceClass, Engine, FeatureSet};
+use crate::runtime::backend::{Backend, KernelId, KernelKey};
 use crate::runtime::error::{Error, Result};
 use crate::runtime::stream::Stream;
 
@@ -40,7 +40,12 @@ impl core::fmt::Debug for Device {
 impl Device {
     /// Wraps a backend (used by the built-in probes and by out-of-tree backends).
     pub fn from_backend(backend: Arc<dyn Backend>) -> Device {
-        Device { inner: Arc::new(Inner { backend, kernels: Mutex::new(HashMap::new()) }) }
+        Device {
+            inner: Arc::new(Inner {
+                backend,
+                kernels: Mutex::new(HashMap::new()),
+            }),
+        }
     }
 
     /// A host-emulated device for tests (feature `mock`).
@@ -107,7 +112,12 @@ impl Placement {
                     (class, d.features().tiers.len())
                 };
                 // max_by_key keeps the last max; reverse so the first device wins ties.
-                devices.iter().filter(matrix).rev().max_by_key(|d| rank(d)).cloned()
+                devices
+                    .iter()
+                    .filter(matrix)
+                    .rev()
+                    .max_by_key(|d| rank(d))
+                    .cloned()
             }
         }
     }

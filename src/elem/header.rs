@@ -45,7 +45,9 @@ pub fn formats_header() -> String {
         let _ = writeln!(s, "#define NB_{n}_MAX_CODE 0x{:X}u", f.max_code());
         let _ = writeln!(s, "#define NB_{n}_SPECIAL NB_SPECIAL_{sp}\n");
     }
-    let kinds = ["F32", "TF32", "I32", "I8", "U8", "FLOAT", "INT", "MX", "NVFP4", "BFP", "Q8_0", "Q6_K"];
+    let kinds = [
+        "F32", "TF32", "I32", "I8", "U8", "FLOAT", "INT", "MX", "NVFP4", "BFP", "Q8_0", "Q6_K",
+    ];
     for (i, k) in kinds.iter().enumerate() {
         let _ = writeln!(s, "#define NB_KIND_{k} {i}u");
     }
@@ -53,7 +55,12 @@ pub fn formats_header() -> String {
     // Descriptors of the formats kernels reference by name (Format::desc).
     for f in [MiniFloat::E4M3Fn, MiniFloat::E2M1, MiniFloat::F16] {
         let fmt = Format::Float(f);
-        let _ = writeln!(s, "#define NB_DESC_{} 0x{:X}u", fmt.name().to_ascii_uppercase(), fmt.desc());
+        let _ = writeln!(
+            s,
+            "#define NB_DESC_{} 0x{:X}u",
+            fmt.name().to_ascii_uppercase(),
+            fmt.desc()
+        );
     }
     s.push('\n');
     let _ = writeln!(s, "#define NB_MX_BLOCK {MX_BLOCK}");
@@ -79,6 +86,9 @@ mod tests {
             std::fs::write(path, &want).unwrap();
         }
         let have = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(have == want, "{path} is stale; rerun with NUMEROBIS_BLESS=1");
+        assert!(
+            have == want,
+            "{path} is stale; rerun with NUMEROBIS_BLESS=1"
+        );
     }
 }

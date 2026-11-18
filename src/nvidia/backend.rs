@@ -5,18 +5,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
+use super::Tier as NvTier;
 use super::gpu::{Alloc, Gpu, Mem, cards};
 use super::program::{Kernel, Program};
 use super::qmd::{self, Qmd};
 use super::queue::{Engine as Ch, Queues};
 use super::sys::*;
-use super::Tier as NvTier;
 use crate::engine::{Access, DeviceClass, Engine, FeatureSet};
+use crate::runtime::Device;
 use crate::runtime::abi::{Launch, lower};
 use crate::runtime::backend::{Arg, Backend, BufId, Fence, KernelId, KernelKey, OpSig};
 use crate::runtime::error::{Error, Result};
 use crate::runtime::os::Fd;
-use crate::runtime::Device;
 use crate::tiers::Tier;
 
 static SM80: &[u8] = include_bytes!("../../kernels/bin/nvidia/sm_80-emulated.cubin");
@@ -71,16 +71,25 @@ fn select(arch: &NV2080_CTRL_MC_GET_ARCH_INFO_PARAMS) -> Option<(u32, &'static [
 }
 
 fn driver_version() -> Option<String> {
-    std::fs::read_to_string("/sys/module/nvidia/version").ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string("/sys/module/nvidia/version")
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Tries to open every GPU the driver lists; errors are kept for diagnostics
 /// (`examples/probe.rs`). Unknown driver versions are refused unless
 /// `NUMEROBIS_NV_ANY_DRIVER=1` (the RM ABI changes between releases).
 pub fn probe() -> Vec<Result<Device>> {
-    let Some(version) = driver_version() else { return Vec::new() };
-    if !TESTED_DRIVERS.contains(&version.as_str()) && std::env::var_os("NUMEROBIS_NV_ANY_DRIVER").is_none() {
-        return vec![Err(Error::DriverTooOld { have: version, need: TESTED_DRIVERS.join(" or ") })];
+    let Some(version) = driver_version() else {
+        return Vec::new();
+    };
+    if !TESTED_DRIVERS.contains(&version.as_str())
+        && std::env::var_os("NUMEROBIS_NV_ANY_DRIVER").is_none()
+    {
+        return vec![Err(Error::DriverTooOld {
+            have: version,
+            need: TESTED_DRIVERS.join(" or "),
+        })];
     }
     let list = match Fd::open("/dev/nvidiactl").and_then(|ctl| cards(&ctl)) {
         Ok(l) => l,
@@ -94,7 +103,11 @@ pub fn probe() -> Vec<Result<Device>> {
             static OPEN: Mutex<Vec<(u32, Weak<NvBackend>)>> = Mutex::new(Vec::new());
             let mut open = OPEN.lock().unwrap_or_else(|e| e.into_inner());
             open.retain(|(_, w)| w.strong_count() > 0);
-            if let Some(b) = open.iter().find(|(m, _)| *m == minor).and_then(|(_, w)| w.upgrade()) {
+            if let Some(b) = open
+                .iter()
+                .find(|(m, _)| *m == minor)
+                .and_then(|(_, w)| w.upgrade())
+            {
                 return Ok(Device::from_backend(b));
             }
             let b = Arc::new(NvBackend::open(minor, gpu_id, &version)?);
@@ -112,20 +125,35 @@ pub fn open_all() -> Vec<Device> {
 impl NvBackend {
     pub fn open(minor: u32, gpu_id: u32, version: &str) -> Result<NvBackend> {
         let gpu = Gpu::open(Fd::open("/dev/nvidiactl")?, minor, gpu_id)?;
-        let (compute_class, image, tier) =
-            select(&gpu.arch).ok_or_else(|| Error::Unsupported(format!("NVIDIA architecture {:#x} on the raw path", gpu.arch.architecture)))?;
+        let (compute_class, image, tier) = select(&gpu.arch).ok_or_else(|| {
+            Error::Unsupported(format!(
+                "NVIDIA architecture {:#x} on the raw path",
+                gpu.arch.architecture
+            ))
+        })?;
         let program = Program::parse(image)?;
         if program.stack as u64 > SLM_PER_THREAD {
-            return Err(Error::BadBinary(format!("kernels need {} bytes of stack", program.stack)));
+            return Err(Error::BadBinary(format!(
+                "kernels need {} bytes of stack",
+                program.stack
+            )));
         }
         let mut q = Queues::new(&gpu, compute_class, AMPERE_DMA_COPY_B)?;
 
         let gr = gpu.gr;
-        let per_tpc = ((SLM_PER_THREAD * 32).next_multiple_of(0x200) * gr.max_warps_per_sm.max(1) as u64 * gr.sm_per_tpc.max(1) as u64)
+        let per_tpc = ((SLM_PER_THREAD * 32).next_multiple_of(0x200)
+            * gr.max_warps_per_sm.max(1) as u64
+            * gr.sm_per_tpc.max(1) as u64)
             .next_multiple_of(0x8000);
-        let local_size = (per_tpc * gr.tpc_per_gpc.max(1) as u64 * gr.gpcs.max(1) as u64).next_multiple_of(0x20000);
+        let local_size = (per_tpc * gr.tpc_per_gpc.max(1) as u64 * gr.gpcs.max(1) as u64)
+            .next_multiple_of(0x20000);
         let local = gpu.alloc(local_size, Mem::Vram)?;
-        q.init(compute_class, AMPERE_DMA_COPY_B, (local.va, per_tpc), (SHARED_WINDOW, LOCAL_WINDOW))?;
+        q.init(
+            compute_class,
+            AMPERE_DMA_COPY_B,
+            (local.va, per_tpc),
+            (SHARED_WINDOW, LOCAL_WINDOW),
+        )?;
 
         // Kernel image: VRAM, uploaded once through staging.
         let code = gpu.alloc(image.len() as u64, Mem::Vram)?;
@@ -157,7 +185,10 @@ impl NvBackend {
                 kernels: Vec::new(),
                 retire: Vec::new(),
                 downloads: HashMap::new(),
-                code: Loaded { image: code, program },
+                code: Loaded {
+                    image: code,
+                    program,
+                },
                 _local: local,
             }),
             gpu,
@@ -171,7 +202,9 @@ impl NvBackend {
     /// Frees staging buffers whose work has finished.
     fn reap(&self, s: &mut State) {
         let done = s.q.completed();
-        let (old, keep): (Vec<_>, Vec<_>) = core::mem::take(&mut s.retire).into_iter().partition(|(f, _)| *f <= done);
+        let (old, keep): (Vec<_>, Vec<_>) = core::mem::take(&mut s.retire)
+            .into_iter()
+            .partition(|(f, _)| *f <= done);
         s.retire = keep;
         for (_, a) in old {
             self.gpu.free(a);
@@ -183,7 +216,13 @@ impl NvBackend {
         let prog = image + k.text.0;
         let shared = (0x400 + k.shared).next_multiple_of(128);
         // SM config in 4 KiB units + 1, smallest of 32/64/100 KiB that fits.
-        let cfg = [32u32, 64, 100].into_iter().map(|c| c * 1024).find(|&c| c >= shared).unwrap_or(100 * 1024) / 4096 + 1;
+        let cfg = [32u32, 64, 100]
+            .into_iter()
+            .map(|c| c * 1024)
+            .find(|&c| c >= shared)
+            .unwrap_or(100 * 1024)
+            / 4096
+            + 1;
         q.set(qmd::QMD_GROUP_ID, 0x3f);
         q.set(qmd::SM_GLOBAL_CACHING_ENABLE, 1);
         q.set(qmd::INVALIDATE_TEXTURE_HEADER_CACHE, 1);
@@ -204,7 +243,10 @@ impl NvBackend {
         q.set(qmd::SHADER_LOCAL_MEMORY_HIGH_SIZE, SLM_PER_THREAD);
         q.set(qmd::PROGRAM_ADDRESS_LOWER, prog & 0xffff_ffff);
         q.set(qmd::PROGRAM_ADDRESS_UPPER, prog >> 32);
-        q.set(qmd::PROGRAM_PREFETCH_ADDR_LOWER_SHIFTED, (prog >> 8) & 0xffff_ffff);
+        q.set(
+            qmd::PROGRAM_PREFETCH_ADDR_LOWER_SHIFTED,
+            (prog >> 8) & 0xffff_ffff,
+        );
         q.set(qmd::PROGRAM_PREFETCH_ADDR_UPPER_SHIFTED, prog >> 40);
         q.set(qmd::PROGRAM_PREFETCH_SIZE, (k.text.1 >> 8).min(0x1ff));
         q.set(qmd::SASS_VERSION, self.sass as u64);
@@ -225,7 +267,12 @@ impl NvBackend {
     /// plus the kernel parameters.
     fn cbuf0(k: &Kernel, l: &Launch, bufs: &HashMap<u64, Alloc>) -> Result<Vec<u8>> {
         if l.args.len() != k.param_offsets.len() {
-            return Err(Error::InvalidArgument(format!("{}: {} args for {} parameters", k.name, l.args.len(), k.param_offsets.len())));
+            return Err(Error::InvalidArgument(format!(
+                "{}: {} args for {} parameters",
+                k.name,
+                l.args.len(),
+                k.param_offsets.len()
+            )));
         }
         let mut c = vec![0u8; k.cbuf0_size as usize];
         // ntid.{x,y,z} at 0x0 and nctaid.{x,y,z} at 0xc: SASS reads them from here.
@@ -239,7 +286,10 @@ impl NvBackend {
             let at = (k.params.0 + off) as usize;
             match *a {
                 Arg::Buf(b) => {
-                    let va = bufs.get(&b.0).ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?.va;
+                    let va = bufs
+                        .get(&b.0)
+                        .ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?
+                        .va;
                     c[at..at + 8].copy_from_slice(&va.to_le_bytes());
                 }
                 Arg::U32(v) => c[at..at + 4].copy_from_slice(&v.to_le_bytes()),
@@ -277,7 +327,10 @@ impl Backend for NvBackend {
     fn upload(&self, id: BufId, offset: usize, src: &[u8]) -> Result<Fence> {
         let mut s = self.lock();
         self.reap(&mut s);
-        let dst = s.bufs.get(&id.0).ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?;
+        let dst = s
+            .bufs
+            .get(&id.0)
+            .ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?;
         if offset + src.len() > dst.size as usize {
             return Err(Error::InvalidArgument("upload out of bounds".into()));
         }
@@ -298,7 +351,10 @@ impl Backend for NvBackend {
     fn download(&self, id: BufId, offset: usize, len: usize) -> Result<Fence> {
         let mut s = self.lock();
         self.reap(&mut s);
-        let src = s.bufs.get(&id.0).ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?;
+        let src = s
+            .bufs
+            .get(&id.0)
+            .ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?;
         if offset + len > src.size as usize {
             return Err(Error::InvalidArgument("download out of bounds".into()));
         }
@@ -315,7 +371,11 @@ impl Backend for NvBackend {
     }
 
     fn take_download(&self, fence: Fence, dst: &mut [u8]) -> Result<()> {
-        let (staging, len) = self.lock().downloads.remove(&fence.0).ok_or_else(|| Error::InvalidArgument("unknown download".into()))?;
+        let (staging, len) = self
+            .lock()
+            .downloads
+            .remove(&fence.0)
+            .ok_or_else(|| Error::InvalidArgument("unknown download".into()))?;
         if dst.len() != len {
             return Err(Error::InvalidArgument("download size mismatch".into()));
         }
@@ -331,7 +391,11 @@ impl Backend for NvBackend {
 
     fn load_kernel(&self, key: &KernelKey) -> Result<KernelId> {
         if !self.supports(key) {
-            return Err(Error::Unsupported(format!("{} on {}", key.name, key.tier.name())));
+            return Err(Error::Unsupported(format!(
+                "{} on {}",
+                key.name,
+                key.tier.name()
+            )));
         }
         let mut s = self.lock();
         s.kernels.push(key.sig);
@@ -341,12 +405,20 @@ impl Backend for NvBackend {
     fn dispatch(&self, kernel: KernelId, args: &[Arg]) -> Result<Fence> {
         let mut s = self.lock();
         self.reap(&mut s);
-        let sig = *s.kernels.get(kernel.0 as usize).ok_or_else(|| Error::InvalidArgument("unknown kernel".into()))?;
+        let sig = *s
+            .kernels
+            .get(kernel.0 as usize)
+            .ok_or_else(|| Error::InvalidArgument("unknown kernel".into()))?;
         let launches = lower(sig, args)?;
         // Build every launch's data first (needs `bufs`), then push.
         let mut prepared = Vec::with_capacity(launches.len());
         for l in &launches {
-            let k = s.code.program.kernel(l.symbol).ok_or_else(|| Error::BadBinary(format!("missing kernel {}", l.symbol)))?.clone();
+            let k = s
+                .code
+                .program
+                .kernel(l.symbol)
+                .ok_or_else(|| Error::BadBinary(format!("missing kernel {}", l.symbol)))?
+                .clone();
             let c = Self::cbuf0(&k, l, &s.bufs)?;
             prepared.push((k, c, l.items));
         }
@@ -362,9 +434,17 @@ impl Backend for NvBackend {
                 let cb = p.data(c, 256)?;
                 let qmd = self.qmd(k, image, cb, *items);
                 let qa = p.data(&qmd.to_bytes(), 256)?;
-                p.method(SUBC_COMPUTE, NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI, &[(1 << 12) | (1 << 4) | 1]);
+                p.method(
+                    SUBC_COMPUTE,
+                    NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI,
+                    &[(1 << 12) | (1 << 4) | 1],
+                );
                 p.method(SUBC_COMPUTE, NVC7C0_SEND_PCAS_A, &[(qa >> 8) as u32]);
-                p.method(SUBC_COMPUTE, NVC7C0_SEND_SIGNALING_PCAS2_B, &[PCAS_ACTION_INVALIDATE_SCHEDULE]);
+                p.method(
+                    SUBC_COMPUTE,
+                    NVC7C0_SEND_SIGNALING_PCAS2_B,
+                    &[PCAS_ACTION_INVALIDATE_SCHEDULE],
+                );
             }
             Ok(())
         })?;
@@ -384,7 +464,8 @@ impl Backend for NvBackend {
 
     fn elapsed(&self, fence: Fence) -> Option<Duration> {
         let s = self.lock();
-        s.q.timestamps(fence.0).map(|(a, b)| Duration::from_nanos(b.saturating_sub(a)))
+        s.q.timestamps(fence.0)
+            .map(|(a, b)| Duration::from_nanos(b.saturating_sub(a)))
     }
 }
 

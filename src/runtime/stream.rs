@@ -94,12 +94,16 @@ impl<T> Pending<T> {
     #[cfg(target_os = "linux")]
     pub fn sync_file(&self) -> Result<crate::sync::SyncFile> {
         match self.fence {
-            Some(f) => self.backend.export_sync_file(f).map(crate::sync::SyncFile::from_fd).ok_or_else(|| {
-                Error::Unsupported(format!(
-                    "{} has no kernel dma-fences; use Pending::signal_timeline",
-                    self.backend.features().name
-                ))
-            }),
+            Some(f) => self
+                .backend
+                .export_sync_file(f)
+                .map(crate::sync::SyncFile::from_fd)
+                .ok_or_else(|| {
+                    Error::Unsupported(format!(
+                        "{} has no kernel dma-fences; use Pending::signal_timeline",
+                        self.backend.features().name
+                    ))
+                }),
             None => {
                 // Nothing in flight: an already-signalled sync_file.
                 let tl = crate::sync::Timeline::new()?;
@@ -111,7 +115,12 @@ impl<T> Pending<T> {
 }
 
 pub(crate) fn ready(backend: Arc<dyn Backend>, timeout: Duration) -> Pending<()> {
-    Pending { backend, fence: None, timeout, finish: Box::new(|_| Ok(())) }
+    Pending {
+        backend,
+        fence: None,
+        timeout,
+        finish: Box::new(|_| Ok(())),
+    }
 }
 
 struct InFlight {
@@ -179,7 +188,8 @@ impl Stream {
     /// Drops buffer references of work that has already finished.
     fn retire_finished(&mut self) {
         let b = self.dev.inner.backend.clone();
-        self.inflight.retain(|f| b.wait(f.fence, Duration::ZERO).is_err());
+        self.inflight
+            .retain(|f| b.wait(f.fence, Duration::ZERO).is_err());
     }
 
     /// Resolves host-side dependencies before the next submission.
@@ -203,7 +213,8 @@ impl Stream {
     /// The next submission of this stream waits until `timeline` reaches `value`.
     #[cfg(target_os = "linux")]
     pub fn wait_timeline(&mut self, timeline: &crate::sync::Timeline, value: u64) {
-        self.deps.push(crate::runtime::sync::Dep::Timeline(timeline.clone(), value));
+        self.deps
+            .push(crate::runtime::sync::Dep::Timeline(timeline.clone(), value));
     }
 
     /// Waits for all submitted work.
@@ -218,9 +229,13 @@ impl Stream {
 
     /// Allocates `len` elements. The contents are unspecified.
     pub fn alloc<E: Elem>(&mut self, len: usize) -> Result<DeviceBuffer<E>> {
-        let bytes = E::FORMAT
-            .storage_bytes(len)
-            .ok_or_else(|| invalid(format!("{} needs a length that is a multiple of {}", E::NAME, E::FORMAT.block())))?;
+        let bytes = E::FORMAT.storage_bytes(len).ok_or_else(|| {
+            invalid(format!(
+                "{} needs a length that is a multiple of {}",
+                E::NAME,
+                E::FORMAT.block()
+            ))
+        })?;
         let id = self.backend().alloc(bytes.max(1))?;
         let raw = Arc::new(RawBuffer::new(self.backend().clone(), id, bytes));
         Ok(DeviceBuffer::new(raw, len))
@@ -229,13 +244,24 @@ impl Stream {
     /// Imports a dma-buf (from Vulkan, KMS, V4L2, another accelerator) as a
     /// buffer of `len` elements, without a copy. The contents count as exact.
     #[cfg(target_os = "linux")]
-    pub fn import_dmabuf<E: Elem>(&mut self, fd: std::os::fd::BorrowedFd<'_>, len: usize) -> Result<DeviceBuffer<E>> {
-        let bytes = E::FORMAT
-            .storage_bytes(len)
-            .ok_or_else(|| invalid(format!("{} needs a length that is a multiple of {}", E::NAME, E::FORMAT.block())))?;
+    pub fn import_dmabuf<E: Elem>(
+        &mut self,
+        fd: std::os::fd::BorrowedFd<'_>,
+        len: usize,
+    ) -> Result<DeviceBuffer<E>> {
+        let bytes = E::FORMAT.storage_bytes(len).ok_or_else(|| {
+            invalid(format!(
+                "{} needs a length that is a multiple of {}",
+                E::NAME,
+                E::FORMAT.block()
+            ))
+        })?;
         let have = crate::runtime::dmabuf::fd_size(fd)?;
         if have < bytes {
-            return Err(invalid(format!("dma-buf has {have} bytes, {len} × {} needs {bytes}", E::NAME)));
+            return Err(invalid(format!(
+                "dma-buf has {have} bytes, {len} × {} needs {bytes}",
+                E::NAME
+            )));
         }
         let id = self.backend().import_dmabuf(fd, bytes)?;
         let raw = Arc::new(RawBuffer::new(self.backend().clone(), id, bytes));
@@ -265,7 +291,13 @@ impl Stream {
     pub fn write_packed<E: Elem>(&mut self, buf: &DeviceBuffer<E>, bytes: &[u8]) -> Result<()> {
         self.check_same_device(&buf.raw)?;
         if bytes.len() != buf.bytes() {
-            return Err(invalid(format!("{} × {} needs {} bytes, got {}", buf.len(), E::NAME, buf.bytes(), bytes.len())));
+            return Err(invalid(format!(
+                "{} × {} needs {} bytes, got {}",
+                buf.len(),
+                E::NAME,
+                buf.bytes(),
+                bytes.len()
+            )));
         }
         self.before_submit()?;
         let fence = self.backend().upload(buf.raw.id, 0, bytes)?;
@@ -300,7 +332,9 @@ impl Stream {
         if Arc::ptr_eq(&raw.backend, self.backend()) {
             Ok(())
         } else {
-            Err(invalid("buffer belongs to a different device (use share_with)"))
+            Err(invalid(
+                "buffer belongs to a different device (use share_with)",
+            ))
         }
     }
 
@@ -341,7 +375,12 @@ impl Stream {
         }
         let keep = reads.iter().chain(writes).map(|b| Arc::clone(b)).collect();
         self.track(fence, keep);
-        Ok(Pending { backend: self.backend().clone(), fence: Some(fence), timeout: self.timeout, finish: Box::new(|_| Ok(())) })
+        Ok(Pending {
+            backend: self.backend().clone(),
+            fence: Some(fence),
+            timeout: self.timeout,
+            finish: Box::new(|_| Ok(())),
+        })
     }
 
     // ---- reusable command lists ----
@@ -358,7 +397,10 @@ impl Stream {
 
     /// Ends recording and returns the command list.
     pub fn end_recording(&mut self) -> Result<CommandList> {
-        let r = self.recorder.take().ok_or_else(|| invalid("not recording"))?;
+        let r = self
+            .recorder
+            .take()
+            .ok_or_else(|| invalid("not recording"))?;
         Ok(r.finish(self.dev.clone()))
     }
 
@@ -388,7 +430,12 @@ impl Stream {
             b.set_approx(*approx);
         }
         self.track(fence, plan.keep);
-        Ok(Pending { backend: self.backend().clone(), fence: Some(fence), timeout: self.timeout, finish: Box::new(|_| Ok(())) })
+        Ok(Pending {
+            backend: self.backend().clone(),
+            fence: Some(fence),
+            timeout: self.timeout,
+            finish: Box::new(|_| Ok(())),
+        })
     }
 }
 

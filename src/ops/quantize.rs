@@ -24,5 +24,12 @@ pub fn dequantize<B: BlockElem>(
     src: &DeviceBuffer<B>,
     dst: &mut DeviceBuffer<F32>,
 ) -> Result<Pending<()>> {
-    unary(s, choice, OpSig::Dequantize { from: B::FORMAT }, src, dst, None)
+    unary(
+        s,
+        choice,
+        OpSig::Dequantize { from: B::FORMAT },
+        src,
+        dst,
+        None,
+    )
 }

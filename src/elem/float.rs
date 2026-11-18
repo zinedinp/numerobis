@@ -4,7 +4,7 @@ use miraculix::formats::MiniFloat;
 
 use super::{Elem, Format};
 
-/// Element-wise floating formats; [`ops::convert`](crate::ops::convert) maps between them.
+/// Element-wise floating formats; [`ops::convert`](fn@crate::ops::convert) maps between them.
 pub trait FloatElem: Elem {}
 
 macro_rules! float {

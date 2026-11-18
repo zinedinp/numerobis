@@ -69,7 +69,9 @@ fn bad(msg: &str) -> Error {
 }
 
 fn rd<const N: usize>(b: &[u8], off: usize) -> Result<[u8; N]> {
-    b.get(off..off + N).and_then(|s| s.try_into().ok()).ok_or_else(|| bad("truncated"))
+    b.get(off..off + N)
+        .and_then(|s| s.try_into().ok())
+        .ok_or_else(|| bad("truncated"))
 }
 fn u16_at(b: &[u8], o: usize) -> Result<u16> {
     Ok(u16::from_le_bytes(rd(b, o)?))
@@ -86,7 +88,10 @@ fn usize_of(v: u64) -> Result<usize> {
 
 fn cstr(b: &[u8], off: usize) -> Result<&str> {
     let s = b.get(off..).ok_or_else(|| bad("string offset"))?;
-    let end = s.iter().position(|&c| c == 0).ok_or_else(|| bad("unterminated string"))?;
+    let end = s
+        .iter()
+        .position(|&c| c == 0)
+        .ok_or_else(|| bad("unterminated string"))?;
     core::str::from_utf8(&s[..end]).map_err(|_| bad("non-UTF-8 name"))
 }
 
@@ -101,40 +106,105 @@ impl<'a> Elf<'a> {
             _ => return Err(bad("only little-endian ELF32/ELF64 is supported")),
         };
         // Word-size dependent field reader: u32 in ELF32, u64 in ELF64.
-        let word = |o32: usize, o64: usize| -> Result<u64> { if is32 { Ok(u32_at(b, o32)? as u64) } else { u64_at(b, o64) } };
+        let word = |o32: usize, o64: usize| -> Result<u64> {
+            if is32 {
+                Ok(u32_at(b, o32)? as u64)
+            } else {
+                u64_at(b, o64)
+            }
+        };
         let machine = u16_at(b, 18)?;
         let entry = word(24, 24)?;
         let flags = if is32 { u32_at(b, 36)? } else { u32_at(b, 48)? };
         let shoff = usize_of(word(32, 40)?)?;
         let (shentsize, shnum, shstrndx) = if is32 {
-            (u16_at(b, 46)? as usize, u16_at(b, 48)? as usize, u16_at(b, 50)? as usize)
+            (
+                u16_at(b, 46)? as usize,
+                u16_at(b, 48)? as usize,
+                u16_at(b, 50)? as usize,
+            )
         } else {
-            (u16_at(b, 58)? as usize, u16_at(b, 60)? as usize, u16_at(b, 62)? as usize)
+            (
+                u16_at(b, 58)? as usize,
+                u16_at(b, 60)? as usize,
+                u16_at(b, 62)? as usize,
+            )
         };
         if shnum == 0 {
-            return Ok(Elf { is32, machine, entry, flags, sections: Vec::new() });
+            return Ok(Elf {
+                is32,
+                machine,
+                entry,
+                flags,
+                sections: Vec::new(),
+            });
         }
         if shentsize < if is32 { 40 } else { 64 } {
             return Err(bad("section header size"));
         }
         let hdr = |i: usize| -> Result<Shdr<'a>> {
-            let h = shoff.checked_add(i.checked_mul(shentsize).ok_or_else(|| bad("overflow"))?).ok_or_else(|| bad("overflow"))?;
+            let h = shoff
+                .checked_add(i.checked_mul(shentsize).ok_or_else(|| bad("overflow"))?)
+                .ok_or_else(|| bad("overflow"))?;
             // (offset in ELF32, offset in ELF64) per field.
-            let w = |o32: usize, o64: usize| -> Result<u64> { if is32 { Ok(u32_at(b, h + o32)? as u64) } else { u64_at(b, h + o64) } };
+            let w = |o32: usize, o64: usize| -> Result<u64> {
+                if is32 {
+                    Ok(u32_at(b, h + o32)? as u64)
+                } else {
+                    u64_at(b, h + o64)
+                }
+            };
             let kind = u32_at(b, h + 4)?;
             let (off, size) = (usize_of(w(16, 24)?)?, usize_of(w(20, 32)?)?);
-            let (link, info) = if is32 { (u32_at(b, h + 24)?, u32_at(b, h + 28)?) } else { (u32_at(b, h + 40)?, u32_at(b, h + 44)?) };
+            let (link, info) = if is32 {
+                (u32_at(b, h + 24)?, u32_at(b, h + 28)?)
+            } else {
+                (u32_at(b, h + 40)?, u32_at(b, h + 44)?)
+            };
             // SHT_NOBITS (.bss) has no file data.
-            let data = if kind == 8 { &b[..0] } else { b.get(off..off.checked_add(size).ok_or_else(|| bad("overflow"))?).ok_or_else(|| bad("section out of range"))? };
-            Ok((u32_at(b, h)?, kind, w(8, 8)?, w(12, 16)?, data, link, info, off as u64, size as u64, w(36, 56)?))
+            let data = if kind == 8 {
+                &b[..0]
+            } else {
+                b.get(off..off.checked_add(size).ok_or_else(|| bad("overflow"))?)
+                    .ok_or_else(|| bad("section out of range"))?
+            };
+            Ok((
+                u32_at(b, h)?,
+                kind,
+                w(8, 8)?,
+                w(12, 16)?,
+                data,
+                link,
+                info,
+                off as u64,
+                size as u64,
+                w(36, 56)?,
+            ))
         };
         let strtab = hdr(shstrndx)?.4;
         let mut sections = Vec::with_capacity(shnum);
         for i in 0..shnum {
             let (name, kind, flags, addr, data, link, info, offset, size, entsize) = hdr(i)?;
-            sections.push(Section { name: cstr(strtab, name as usize)?, kind, flags, addr, data, link, info, offset, size, entsize });
+            sections.push(Section {
+                name: cstr(strtab, name as usize)?,
+                kind,
+                flags,
+                addr,
+                data,
+                link,
+                info,
+                offset,
+                size,
+                entsize,
+            });
         }
-        Ok(Elf { is32, machine, entry, flags, sections })
+        Ok(Elf {
+            is32,
+            machine,
+            entry,
+            flags,
+            sections,
+        })
     }
 
     pub fn section(&self, name: &str) -> Option<&Section<'a>> {
@@ -144,8 +214,16 @@ impl<'a> Elf<'a> {
     /// Symbols from `.symtab` and `.dynsym`.
     pub fn symbols(&self) -> Result<Vec<Symbol<'a>>> {
         let mut out = Vec::new();
-        for s in self.sections.iter().filter(|s| s.kind == SHT_SYMTAB || s.kind == SHT_DYNSYM) {
-            let strs = self.sections.get(s.link as usize).ok_or_else(|| bad("symtab link"))?.data;
+        for s in self
+            .sections
+            .iter()
+            .filter(|s| s.kind == SHT_SYMTAB || s.kind == SHT_DYNSYM)
+        {
+            let strs = self
+                .sections
+                .get(s.link as usize)
+                .ok_or_else(|| bad("symtab link"))?
+                .data;
             if self.is32 {
                 for e in s.data.as_chunks::<16>().0 {
                     out.push(Symbol {
@@ -182,12 +260,21 @@ impl<'a> Elf<'a> {
             let d = s.data;
             let mut o = 0;
             while o + 12 <= d.len() {
-                let (nsz, dsz, ty) = (u32_at(d, o)? as usize, u32_at(d, o + 4)? as usize, u32_at(d, o + 8)?);
+                let (nsz, dsz, ty) = (
+                    u32_at(d, o)? as usize,
+                    u32_at(d, o + 4)? as usize,
+                    u32_at(d, o + 8)?,
+                );
                 let n0 = o + 12;
                 let d0 = n0 + nsz.next_multiple_of(4);
                 let name = d.get(n0..n0 + nsz).ok_or_else(|| bad("note name"))?;
-                let name = core::str::from_utf8(name.strip_suffix(&[0]).unwrap_or(name)).map_err(|_| bad("note name"))?;
-                out.push((name, ty, d.get(d0..d0 + dsz).ok_or_else(|| bad("note desc"))?));
+                let name = core::str::from_utf8(name.strip_suffix(&[0]).unwrap_or(name))
+                    .map_err(|_| bad("note name"))?;
+                out.push((
+                    name,
+                    ty,
+                    d.get(d0..d0 + dsz).ok_or_else(|| bad("note desc"))?,
+                ));
                 o = d0 + dsz.next_multiple_of(4);
             }
         }
@@ -207,7 +294,10 @@ mod tests {
         assert_eq!(elf.machine, machine::X86_64);
         assert!(elf.section(".text").is_some_and(|s| !s.data.is_empty()));
         let syms = elf.symbols().unwrap();
-        assert!(syms.iter().any(|s| s.name.contains("parses_own_test_binary")));
+        assert!(
+            syms.iter()
+                .any(|s| s.name.contains("parses_own_test_binary"))
+        );
     }
 
     #[test]

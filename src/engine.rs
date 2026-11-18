@@ -68,7 +68,10 @@ pub struct FeatureSet {
 impl FeatureSet {
     /// Access layer for `engine`, if reachable.
     pub fn access(&self, engine: Engine) -> Option<Access> {
-        self.engines.iter().find(|(e, _)| *e == engine).map(|&(_, a)| a)
+        self.engines
+            .iter()
+            .find(|(e, _)| *e == engine)
+            .map(|&(_, a)| a)
     }
 
     pub fn has_tier(&self, tier: Tier) -> bool {

@@ -19,7 +19,11 @@ fn check(got: &[f32], a: &[f32], b: &[f32], (m, n, k): (usize, usize, usize), to
                 mag += t.abs();
             }
             let g = got[i * n + j] as f64;
-            assert!((g - r).abs() <= tol * mag.max(1e-30), "C[{i},{j}] = {g}, want {r} (+-{})", tol * mag);
+            assert!(
+                (g - r).abs() <= tol * mag.max(1e-30),
+                "C[{i},{j}] = {g}, want {r} (+-{})",
+                tol * mag
+            );
         }
     }
 }
@@ -61,17 +65,51 @@ fn case<A: Input>(s: &mut Stream, m: usize, n: usize, k: usize) {
     // The reference sees exactly the quantized inputs.
     let (aq, bq) = (A::host(s, &a), A::host(s, &b));
     let mut c = s.alloc::<F32>(m * n).unwrap();
-    let sig = OpSig::Gemm { a: A::FORMAT, b: A::FORMAT, acc: F32::FORMAT };
+    let sig = OpSig::Gemm {
+        a: A::FORMAT,
+        b: A::FORMAT,
+        acc: F32::FORMAT,
+    };
     let tiers = auto_down::tiers(s.device(), sig, false);
     assert!(!tiers.is_empty(), "{}", A::NAME);
     for tier in tiers {
-        ops::gemm(s, Choice::Down(tier), GemmShape::new(m, n, k), 1.0, &a, &b, 0.0, &mut c).unwrap().wait().unwrap();
+        ops::gemm(
+            s,
+            Choice::Down(tier),
+            GemmShape::new(m, n, k),
+            1.0,
+            &a,
+            &b,
+            0.0,
+            &mut c,
+        )
+        .unwrap()
+        .wait()
+        .unwrap();
         check(&download(s, &c), &aq, &bq, (m, n, k), eps);
     }
     // F16 accumulator output: one more rounding (2^-11 relative).
     let mut c16 = s.alloc::<F16>(m * n).unwrap();
-    ops::gemm(s, Choice::Up, GemmShape::new(m, n, k), 1.0, &a, &b, 0.0, &mut c16).unwrap().wait().unwrap();
-    check(&float_to_host(s, &c16), &aq, &bq, (m, n, k), eps + 1.0 / 2048.0);
+    ops::gemm(
+        s,
+        Choice::Up,
+        GemmShape::new(m, n, k),
+        1.0,
+        &a,
+        &b,
+        0.0,
+        &mut c16,
+    )
+    .unwrap()
+    .wait()
+    .unwrap();
+    check(
+        &float_to_host(s, &c16),
+        &aq,
+        &bq,
+        (m, n, k),
+        eps + 1.0 / 2048.0,
+    );
 }
 
 #[test]
@@ -98,18 +136,27 @@ fn int_exact_alpha_beta_batched() {
         let mut s = dev.stream();
         let (m, n, k, batch) = (3, 5, 16, 2);
         let mut rng = Rng(1);
-        let a: Vec<i8> = (0..batch * m * k).map(|_| (rng.next() % 15) as i8 - 7).collect();
-        let b: Vec<i8> = (0..batch * n * k).map(|_| (rng.next() % 15) as i8 - 7).collect();
+        let a: Vec<i8> = (0..batch * m * k)
+            .map(|_| (rng.next() % 15) as i8 - 7)
+            .collect();
+        let b: Vec<i8> = (0..batch * n * k)
+            .map(|_| (rng.next() % 15) as i8 - 7)
+            .collect();
         let c0: Vec<i32> = (0..batch * m * n).map(|i| i as i32 - 10).collect();
         let (ad, bd) = (s.upload::<I8>(&a).unwrap(), s.upload::<I8>(&b).unwrap());
         let mut c = s.upload::<I32>(&c0).unwrap();
         let sh = GemmShape::new(m, n, k).batched(batch);
-        ops::gemm(&mut s, Choice::Up, sh, 3, &ad, &bd, -2, &mut c).unwrap().wait().unwrap();
+        ops::gemm(&mut s, Choice::Up, sh, 3, &ad, &bd, -2, &mut c)
+            .unwrap()
+            .wait()
+            .unwrap();
         let mut want = vec![0i32; batch * m * n];
         for z in 0..batch {
             for i in 0..m {
                 for j in 0..n {
-                    let dot: i32 = (0..k).map(|p| a[z * m * k + i * k + p] as i32 * b[z * n * k + j * k + p] as i32).sum();
+                    let dot: i32 = (0..k)
+                        .map(|p| a[z * m * k + i * k + p] as i32 * b[z * n * k + j * k + p] as i32)
+                        .sum();
                     want[z * m * n + i * n + j] = 3 * dot - 2 * c0[z * m * n + i * n + j];
                 }
             }
@@ -119,10 +166,19 @@ fn int_exact_alpha_beta_batched() {
         // Same through packed INT4 (all values fit in [-8, 7]).
         let mut a4 = s.alloc::<I4>(a.len()).unwrap();
         let mut b4 = s.alloc::<I4>(b.len()).unwrap();
-        ops::pack(&mut s, Choice::Up, &ad, &mut a4).unwrap().wait().unwrap();
-        ops::pack(&mut s, Choice::Up, &bd, &mut b4).unwrap().wait().unwrap();
+        ops::pack(&mut s, Choice::Up, &ad, &mut a4)
+            .unwrap()
+            .wait()
+            .unwrap();
+        ops::pack(&mut s, Choice::Up, &bd, &mut b4)
+            .unwrap()
+            .wait()
+            .unwrap();
         let mut c = s.upload::<I32>(&c0).unwrap();
-        ops::gemm(&mut s, Choice::Up, sh, 3, &a4, &b4, -2, &mut c).unwrap().wait().unwrap();
+        ops::gemm(&mut s, Choice::Up, sh, 3, &a4, &b4, -2, &mut c)
+            .unwrap()
+            .wait()
+            .unwrap();
         assert_eq!(download(&mut s, &c), want);
     }
 }
@@ -133,9 +189,33 @@ fn beta_zero_ignores_nan_c() {
         let mut s = dev.stream();
         let a = s.upload::<F32>(&[2.0]).unwrap();
         let mut c = s.upload::<F32>(&[f32::NAN]).unwrap();
-        ops::gemm(&mut s, Choice::Up, GemmShape::new(1, 1, 1), 1.5, &a, &a, 0.0, &mut c).unwrap().wait().unwrap();
+        ops::gemm(
+            &mut s,
+            Choice::Up,
+            GemmShape::new(1, 1, 1),
+            1.5,
+            &a,
+            &a,
+            0.0,
+            &mut c,
+        )
+        .unwrap()
+        .wait()
+        .unwrap();
         assert_eq!(download(&mut s, &c), [6.0]);
-        ops::gemm(&mut s, Choice::Up, GemmShape::new(1, 1, 1), 1.0, &a, &a, 0.5, &mut c).unwrap().wait().unwrap();
+        ops::gemm(
+            &mut s,
+            Choice::Up,
+            GemmShape::new(1, 1, 1),
+            1.0,
+            &a,
+            &a,
+            0.5,
+            &mut c,
+        )
+        .unwrap()
+        .wait()
+        .unwrap();
         assert_eq!(download(&mut s, &c), [7.0]);
     }
 }
