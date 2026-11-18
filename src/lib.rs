@@ -11,8 +11,9 @@
 //! | Module | Contents |
 //! |---|---|
 //! | [`elem`] | element types, split into `float`, `int`, `block` |
-//! | [`ops`] | the API, one module per calculation kind (`convert`, `quantize`, `int`, `gemm`, `reduce`) |
-//! | [`runtime`] | `Backend` trait, `Device`, `Stream`, `DeviceBuffer`, errors |
+//! | [`ops`] | the API, one module per calculation kind (`convert`, `quantize`, `int`, `gemm`, `reduce`, `act`, `conv`, `resize`) |
+//! | [`sync`] | `SyncFile` / `Timeline`: fences shared with Vulkan semaphores |
+//! | [`runtime`] | `Backend` trait, `Device`, `Stream`, `DeviceBuffer`, `CommandList`, `Exactness`, dma-buf, errors |
 //! | [`auto_up`], [`auto_down`], [`tiers`] | tier selection over the vendor ladders |
 //! | [`intel`], [`amd`], [`nvidia`], [`tt`], [`v3d`] | one module per GPU / card vendor |
 //! | [`npu`] | `accel` subsystem base plus one module per NPU |
@@ -62,5 +63,9 @@ pub mod v3d;
 pub use engine::{Access, DeviceClass, Engine, FeatureSet};
 pub use miraculix::formats::Overflow;
 pub use ops::{Choice, GemmShape};
-pub use runtime::{DEFAULT_TIMEOUT, Device, DeviceBuffer, Error, HostCopy, Pending, Placement, Result, Stream};
+pub use runtime::{
+    Bind, CommandList, DEFAULT_TIMEOUT, Device, DeviceBuffer, Error, Exactness, HostCopy, Pending, Placement, Result, Stream,
+};
+#[cfg(target_os = "linux")]
+pub use runtime::sync;
 pub use tiers::Tier;

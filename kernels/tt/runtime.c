@@ -113,6 +113,9 @@ static int run(struct nb_mailbox *m) {
         case 5: nb_gemm_f(P(0), P(1), P(2), U(3), U(4), U(5), U(6), F(7), F(8), U(9), U(10), U(11), U(12), U(13)); break;
         case 6: nb_gemm_i(P(0), P(1), P(2), U(3), U(4), U(5), U(6), I(7), I(8), U(9), U(10), U(11), U(12), U(13)); break;
         case 7: nb_absmax_block(P(0), P(1), U(2), U(3), U(4), U(5)); break;
+        case 8: nb_act(P(0), P(1), U(2), U(3), F(4), F(5), U(6), U(7)); break;
+        case 9: nb_conv2d(P(0), P(1), P(2), P(3), P(4), U(5), U(6), U(7), U(8)); break;
+        case 10: nb_resize(P(0), P(1), U(2), U(3), U(4), U(5), U(6), U(7), U(8), U(9)); break;
         default: return 1;
         }
     }

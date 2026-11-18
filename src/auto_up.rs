@@ -7,12 +7,22 @@ use crate::tiers::Tier;
 
 /// Highest tier in the device's ladder that supports `sig`.
 pub fn choose(dev: &Device, sig: OpSig, batched: bool) -> Result<Tier> {
+    choose_with(dev, sig, batched, false)
+}
+
+/// [`choose`], optionally only among tiers on which `sig` is bit-exact
+/// ([`OpSig::exact_on`]): the rule for [`Exactness::Bit`](crate::Exactness) streams.
+pub fn choose_with(dev: &Device, sig: OpSig, batched: bool, bit_exact: bool) -> Result<Tier> {
     let name = sig.name(batched);
     dev.features()
         .tiers
         .iter()
         .rev()
         .copied()
+        .filter(|&tier| !bit_exact || sig.exact_on(tier))
         .find(|&tier| dev.backend().supports(&KernelKey { name: name.clone(), sig, tier }))
-        .ok_or_else(|| Error::Unsupported(format!("{name} on {}", dev.features().name)))
+        .ok_or_else(|| {
+            let how = if bit_exact { " (bit-exact tiers only)" } else { "" };
+            Error::Unsupported(format!("{name} on {}{how}", dev.features().name))
+        })
 }

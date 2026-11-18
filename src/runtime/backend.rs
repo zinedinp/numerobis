@@ -1,5 +1,6 @@
 //! The `Backend` trait: the only thing a raw, comfort or mock target implements.
 
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::time::Duration;
 
 use crate::elem::Format;
@@ -41,6 +42,70 @@ pub enum OpSig {
     Gemm { a: Format, b: Format, acc: Format },
     /// Per-block max of `|x|`. Args: `[src, dst, len: U32, block: U32]`.
     AbsmaxBlock { src: Format },
+    /// Element-wise activation. Args: `[src, dst, len: U32, p0: F32, p1: F32]`.
+    Act { src: Format, dst: Format, act: ActKind },
+    /// Direct 2-D convolution, NCHW / KCRS / NKPQ.
+    /// Args: `[x, w, bias (F32, or x when absent), y, params (U32 buffer, `conv::PARAM_WORDS`)]`.
+    Conv2d { x: Format, w: Format, y: Format, bias: bool },
+    /// Image resize of `planes` HxW planes to HoxWo.
+    /// Args: `[src, dst, planes, h, w, ho, wo: U32]`.
+    Resize { src: Format, dst: Format, mode: ResizeMode },
+}
+
+/// Activation function of [`OpSig::Act`] (parameters travel as arguments).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ActKind {
+    Relu,
+    LeakyRelu,
+    Sigmoid,
+    Tanh,
+    Silu,
+    Gelu,
+    Clamp,
+    Exp,
+}
+
+impl ActKind {
+    /// Kernel code (`NB_ACT_*` in `kernels/include/nb_math.h`).
+    pub fn code(self) -> u32 {
+        self as u32
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            ActKind::Relu => "relu",
+            ActKind::LeakyRelu => "leaky_relu",
+            ActKind::Sigmoid => "sigmoid",
+            ActKind::Tanh => "tanh",
+            ActKind::Silu => "silu",
+            ActKind::Gelu => "gelu",
+            ActKind::Clamp => "clamp",
+            ActKind::Exp => "exp",
+        }
+    }
+    /// Pure selects/compares: identical on every tier (no rounding inside).
+    pub fn is_selection(self) -> bool {
+        matches!(self, ActKind::Relu | ActKind::Clamp)
+    }
+}
+
+/// Sampling of [`OpSig::Resize`], half-pixel centres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResizeMode {
+    /// Integer index arithmetic only: identical on every tier.
+    Nearest,
+    Bilinear,
+}
+
+impl ResizeMode {
+    pub fn code(self) -> u32 {
+        self as u32
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            ResizeMode::Nearest => "nearest",
+            ResizeMode::Bilinear => "bilinear",
+        }
+    }
 }
 
 /// Kernel lookup key: `<op>_<types>` name plus tier.
@@ -65,6 +130,36 @@ impl OpSig {
                 format!("{p}_{}_{}_{}", a.name(), b.name(), acc.name())
             }
             OpSig::AbsmaxBlock { src } => format!("absmax_block_{}", src.name()),
+            OpSig::Act { src, dst, act } => format!("act_{}_{}_{}", act.name(), src.name(), dst.name()),
+            OpSig::Conv2d { x, w, y, bias } => {
+                format!("conv2d{}_{}_{}_{}", if bias { "_bias" } else { "" }, x.name(), w.name(), y.name())
+            }
+            OpSig::Resize { src, dst, mode } => format!("resize_{}_{}_{}", mode.name(), src.name(), dst.name()),
+        }
+    }
+
+    /// Does this op return the same bits as the mock oracle on `tier`?
+    ///
+    /// Format conversion, quantization, packing, absmax, nearest resize and
+    /// the select-only activations are exact by definition on every tier.
+    /// Everything that rounds (GEMM, convolution, bilinear resize,
+    /// transcendental activations) is bit-exact only on [`Tier::Emulated`];
+    /// vendor tiers (XMX, MFMA, Tensix FPU, native `exp`) reorder or
+    /// approximate. See [`Exactness`](crate::Exactness).
+    pub fn exact_on(&self, tier: Tier) -> bool {
+        if tier == Tier::Emulated {
+            return true;
+        }
+        match *self {
+            OpSig::Convert { .. }
+            | OpSig::Quantize { .. }
+            | OpSig::Dequantize { .. }
+            | OpSig::Pack { .. }
+            | OpSig::Unpack { .. }
+            | OpSig::AbsmaxBlock { .. } => true,
+            OpSig::Act { act, .. } => act.is_selection(),
+            OpSig::Resize { mode, .. } => mode == ResizeMode::Nearest,
+            OpSig::Gemm { .. } | OpSig::Conv2d { .. } => false,
         }
     }
 }
@@ -123,4 +218,29 @@ pub trait Backend: Send + Sync + 'static {
     fn wait(&self, fence: Fence, timeout: Duration) -> Result<()>;
     /// Device time between start and end of the work behind `fence`, once signalled.
     fn elapsed(&self, fence: Fence) -> Option<Duration>;
+
+    /// Submits several dispatches in queue order as one unit (a recorded
+    /// [`CommandList`](crate::CommandList)); returns the fence of the last.
+    /// Backends with a real command buffer override this to submit once.
+    fn dispatch_batch(&self, cmds: &[(KernelId, &[Arg])]) -> Result<Fence> {
+        let mut last = None;
+        for (k, a) in cmds {
+            last = Some(self.dispatch(*k, a)?);
+        }
+        last.ok_or_else(|| crate::Error::InvalidArgument("empty command list".into()))
+    }
+
+    /// Exports the buffer as a dma-buf (DRM PRIME, udmabuf, tt-kmd TLB export).
+    fn export_dmabuf(&self, _id: BufId) -> Result<OwnedFd> {
+        Err(crate::Error::Unsupported(format!("dma-buf export on {}", self.features().name)))
+    }
+    /// Imports a dma-buf of `bytes` bytes as a buffer of this device, without a copy.
+    fn import_dmabuf(&self, _fd: BorrowedFd<'_>, _bytes: usize) -> Result<BufId> {
+        Err(crate::Error::Unsupported(format!("dma-buf import on {}", self.features().name)))
+    }
+    /// A kernel `sync_file` for `fence`, if the driver has dma-fences (DRM
+    /// drivers). `None`: the runtime bridges through a DRM timeline syncobj.
+    fn export_sync_file(&self, _fence: Fence) -> Option<OwnedFd> {
+        None
+    }
 }

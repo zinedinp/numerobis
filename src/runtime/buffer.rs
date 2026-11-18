@@ -1,7 +1,9 @@
 //! Device buffers.
 
 use std::marker::PhantomData;
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::runtime::backend::{Backend, BufId};
 use crate::elem::{Elem, Format, HostRepr, from_bytes};
@@ -13,6 +15,20 @@ pub(crate) struct RawBuffer {
     pub(crate) backend: Arc<dyn Backend>,
     pub(crate) id: BufId,
     pub(crate) bytes: usize,
+    /// Holds results of a tier that is not bit-exact (see [`Exactness`](crate::Exactness)).
+    pub(crate) approx: AtomicBool,
+}
+
+impl RawBuffer {
+    pub(crate) fn new(backend: Arc<dyn Backend>, id: BufId, bytes: usize) -> RawBuffer {
+        RawBuffer { backend, id, bytes, approx: AtomicBool::new(false) }
+    }
+    pub(crate) fn is_approx(&self) -> bool {
+        self.approx.load(Ordering::Acquire)
+    }
+    pub(crate) fn set_approx(&self, v: bool) {
+        self.approx.store(v, Ordering::Release);
+    }
 }
 
 impl Drop for RawBuffer {
@@ -69,6 +85,21 @@ impl<E: Elem> DeviceBuffer<E> {
 
     pub fn format(&self) -> Format {
         E::FORMAT
+    }
+
+    /// `false` once an op on a tier that is not bit-exact wrote it (directly
+    /// or through an input). Such a buffer is fine for display, but an
+    /// [`Exactness::Bit`](crate::Exactness) stream refuses to read it.
+    /// [`Stream::upload`](crate::Stream::upload) makes it exact again.
+    pub fn is_exact(&self) -> bool {
+        !self.raw.is_approx()
+    }
+
+    /// Exports the buffer as a dma-buf (zero-copy sharing with Vulkan, KMS,
+    /// V4L2, other accelerators). Synchronise with [`Pending::signal_timeline`](crate::Pending::signal_timeline)
+    /// or a sync file before the consumer reads it.
+    pub fn export_dmabuf(&self) -> crate::Result<OwnedFd> {
+        self.raw.backend.export_dmabuf(self.raw.id)
     }
 }
 

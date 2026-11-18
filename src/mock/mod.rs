@@ -23,12 +23,36 @@ struct State {
     kernels: Vec<OpSig>,
     downloads: HashMap<u64, Vec<u8>>,
     elapsed: HashMap<u64, Duration>,
+    /// Buffers shared through a dma-buf / memfd: the mapping is the truth,
+    /// `mem` is refreshed from it before and written back after every access.
+    #[cfg(target_os = "linux")]
+    shared: HashMap<u64, crate::runtime::dmabuf::HostMapping>,
 }
 
 impl State {
     fn fence(&mut self) -> Fence {
         self.next += 1;
         Fence(self.next)
+    }
+
+    /// Shared mappings -> `mem`.
+    fn pull(&mut self) {
+        #[cfg(target_os = "linux")]
+        for (id, m) in &self.shared {
+            if let Some(v) = self.mem.get_mut(id) {
+                m.read(v);
+            }
+        }
+    }
+
+    /// `mem` -> shared mappings.
+    fn push(&mut self) {
+        #[cfg(target_os = "linux")]
+        for (id, m) in &self.shared {
+            if let Some(v) = self.mem.get(id) {
+                m.write(v);
+            }
+        }
     }
 }
 
@@ -90,18 +114,23 @@ impl Backend for MockBackend {
     }
 
     fn free(&self, id: BufId) {
-        self.lock().mem.remove(&id.0);
+        let mut s = self.lock();
+        s.mem.remove(&id.0);
+        #[cfg(target_os = "linux")]
+        s.shared.remove(&id.0);
     }
 
     fn upload(&self, id: BufId, offset: usize, src: &[u8]) -> Result<Fence> {
         let mut s = self.lock();
         let b = s.mem.get_mut(&id.0).ok_or_else(|| invalid("unknown buffer"))?;
         b.get_mut(offset..offset + src.len()).ok_or_else(|| invalid("upload out of range"))?.copy_from_slice(src);
+        s.push();
         Ok(s.fence())
     }
 
     fn download(&self, id: BufId, offset: usize, len: usize) -> Result<Fence> {
         let mut s = self.lock();
+        s.pull();
         let b = s.mem.get(&id.0).ok_or_else(|| invalid("unknown buffer"))?;
         let data = b.get(offset..offset + len).ok_or_else(|| invalid("download out of range"))?.to_vec();
         let f = s.fence();
@@ -132,7 +161,9 @@ impl Backend for MockBackend {
         let mut s = self.lock();
         let sig = *s.kernels.get(kernel.0 as usize).ok_or_else(|| invalid("unknown kernel"))?;
         let t = Instant::now();
+        s.pull();
         kernels::run(&mut s.mem, sig, args)?;
+        s.push();
         let f = s.fence();
         s.elapsed.insert(f.0, t.elapsed());
         Ok(f)
@@ -144,5 +175,35 @@ impl Backend for MockBackend {
 
     fn elapsed(&self, fence: Fence) -> Option<Duration> {
         self.lock().elapsed.get(&fence.0).copied()
+    }
+
+    /// Host memory as a real dma-buf (`/dev/udmabuf`) or, without access to
+    /// it, a memfd; either way another device (or process) maps the same pages.
+    #[cfg(target_os = "linux")]
+    fn export_dmabuf(&self, id: BufId) -> Result<std::os::fd::OwnedFd> {
+        use crate::runtime::dmabuf::{HostMapping, host_dmabuf};
+        let mut s = self.lock();
+        if let Some(m) = s.shared.get(&id.0) {
+            return m.fd().try_clone_to_owned().map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)));
+        }
+        let data = s.mem.get(&id.0).ok_or_else(|| invalid("unknown buffer"))?.clone();
+        let (fd, _) = host_dmabuf(data.len())?;
+        let m = HostMapping::new(std::os::fd::AsFd::as_fd(&fd), data.len())?;
+        m.write(&data);
+        s.shared.insert(id.0, m);
+        Ok(fd)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn import_dmabuf(&self, fd: std::os::fd::BorrowedFd<'_>, bytes: usize) -> Result<BufId> {
+        let m = crate::runtime::dmabuf::HostMapping::new(fd, bytes)?;
+        let mut v = vec![0; bytes];
+        m.read(&mut v);
+        let mut s = self.lock();
+        s.next += 1;
+        let id = s.next;
+        s.mem.insert(id, v);
+        s.shared.insert(id, m);
+        Ok(BufId(id))
     }
 }

@@ -24,7 +24,7 @@ pub struct Launch {
 }
 
 /// Every kernel symbol a target binary must export.
-pub const SYMBOLS: [&str; 8] = [
+pub const SYMBOLS: [&str; 11] = [
     "nb_convert",
     "nb_int_convert",
     "nb_nvfp4_tensor_scale",
@@ -33,7 +33,16 @@ pub const SYMBOLS: [&str; 8] = [
     "nb_gemm_f",
     "nb_gemm_i",
     "nb_absmax_block",
+    "nb_act",
+    "nb_conv2d",
+    "nb_resize",
 ];
+
+/// Element-wise float formats the image ops read and write (one element per
+/// byte or more, so work items never share a byte).
+pub fn elementwise_float(f: Format) -> bool {
+    matches!(f, Format::F32 | Format::Tf32) || (matches!(f, Format::Float(_)) && f.block() == 1 && f.storage_bytes(1).is_some())
+}
 
 /// Which signatures the shared Emulated kernels implement (every SIMT
 /// backend's `supports` for [`Tier::Emulated`](crate::Tier::Emulated); the mock
@@ -50,6 +59,8 @@ pub fn supported(sig: OpSig) -> bool {
             _ => false,
         },
         OpSig::AbsmaxBlock { src } => !src.is_integer(),
+        OpSig::Act { src, dst, .. } | OpSig::Resize { src, dst, .. } => elementwise_float(src) && elementwise_float(dst),
+        OpSig::Conv2d { x, w, y, .. } => elementwise_float(x) && elementwise_float(w) && elementwise_float(y),
         #[allow(unreachable_patterns)]
         _ => false,
     }
@@ -142,6 +153,23 @@ fn lower_opt(sig: OpSig, a: &[Arg]) -> Option<Vec<Launch>> {
             let block = u(a, 3)? as usize;
             let args = vec![src, dst, Arg::U32(len as u32), Arg::U32(block as u32), Arg::U32(f.desc()), u32a(f.scale_offset(len))?];
             vec![launch("nb_absmax_block", args, len / block.max(1))?]
+        }
+        OpSig::Act { src: fs, dst: fd, act } => {
+            let len = len?;
+            let args = vec![src, dst, Arg::U32(len as u32), Arg::U32(act.code()), *a.get(3)?, *a.get(4)?, Arg::U32(fs.desc()), Arg::U32(fd.desc())];
+            vec![launch("nb_act", args, len)?]
+        }
+        OpSig::Conv2d { x, w, y, bias } => {
+            let outputs = u(a, 5)? as usize;
+            let mut args = a.get(..5)?.to_vec();
+            args.extend([Arg::U32(x.desc()), Arg::U32(w.desc()), Arg::U32(y.desc()), Arg::U32(bias as u32)]);
+            vec![launch("nb_conv2d", args, outputs)?]
+        }
+        OpSig::Resize { src: fs, dst: fd, mode } => {
+            let (planes, ho, wo) = (u(a, 2)? as usize, u(a, 5)? as usize, u(a, 6)? as usize);
+            let mut args = a.get(..7)?.to_vec();
+            args.extend([Arg::U32(mode.code()), Arg::U32(fs.desc()), Arg::U32(fd.desc())]);
+            vec![launch("nb_resize", args, planes * ho * wo)?]
         }
         #[allow(unreachable_patterns)]
         _ => return None,

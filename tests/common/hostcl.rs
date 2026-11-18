@@ -26,23 +26,50 @@ fn build(cc: &str, args: &[&str], what: &str) {
         .args(args)
         .output()
         .unwrap_or_else(|e| panic!("cannot run {cc} to build the {what}: {e}"));
-    assert!(out.status.success(), "{what} build failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{what} build failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn rv32_driver() -> &'static PathBuf {
     static EXE: OnceLock<PathBuf> = OnceLock::new();
     EXE.get_or_init(|| {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("nb-rv32-driver-{}", std::process::id()));
+        let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("nb-rv32-driver-{}", std::process::id()));
         let inc = root.join("kernels/include");
-        let (drv, sf) = (root.join("kernels/tt/qemu_driver.c"), root.join("kernels/tt/softfloat.c"));
+        let (drv, sf) = (
+            root.join("kernels/tt/qemu_driver.c"),
+            root.join("kernels/tt/softfloat.c"),
+        );
         build(
             "clang",
             &[
-                "--target=riscv32-unknown-linux-gnu", "-march=rv32im", "-mabi=ilp32", "-std=c11", "-O2", "-ffreestanding",
-                "-fno-builtin", "-fno-stack-protector", "-nostdlib", "-static", "-ffp-contract=off", "-fno-jump-tables",
-                "-DNB_HOST", "-Wall", "-Werror", "-Wno-unused-function", "-fuse-ld=lld", "-I", inc.to_str().unwrap(),
-                "-o", exe.to_str().unwrap(), drv.to_str().unwrap(), sf.to_str().unwrap(),
+                "--target=riscv32-unknown-linux-gnu",
+                "-march=rv32im",
+                "-mabi=ilp32",
+                "-std=c11",
+                "-O2",
+                "-ffreestanding",
+                "-fno-builtin",
+                "-fno-stack-protector",
+                "-nostdlib",
+                "-static",
+                "-ffp-contract=off",
+                "-fno-jump-tables",
+                "-DNB_HOST",
+                "-Wall",
+                "-Werror",
+                "-Wno-unused-function",
+                "-fuse-ld=lld",
+                "-I",
+                inc.to_str().unwrap(),
+                "-o",
+                exe.to_str().unwrap(),
+                drv.to_str().unwrap(),
+                sf.to_str().unwrap(),
             ],
             "RV32 kernel driver",
         );
@@ -52,21 +79,39 @@ fn rv32_driver() -> &'static PathBuf {
 
 /// Is `qemu-riscv32` on PATH?
 pub fn have_qemu_rv32() -> bool {
-    Command::new("qemu-riscv32").arg("--version").output().is_ok_and(|o| o.status.success())
+    Command::new("qemu-riscv32")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
 fn driver() -> &'static PathBuf {
     static EXE: OnceLock<PathBuf> = OnceLock::new();
     EXE.get_or_init(|| {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("nb-host-driver-{}", std::process::id()));
+        let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("nb-host-driver-{}", std::process::id()));
         let cc = std::env::var("CC").unwrap_or_else(|_| "clang".into());
-        let (inc, drv) = (root.join("kernels/include"), root.join("kernels/host/driver.c"));
+        let (inc, drv) = (
+            root.join("kernels/include"),
+            root.join("kernels/host/driver.c"),
+        );
         build(
             &cc,
             &[
-                "-std=c11", "-O1", "-ffp-contract=off", "-DNB_HOST", "-Wall", "-Werror", "-Wno-unused-function", "-I",
-                inc.to_str().unwrap(), drv.to_str().unwrap(), "-o", exe.to_str().unwrap(), "-lm",
+                "-std=c11",
+                "-O1",
+                "-ffp-contract=off",
+                "-DNB_HOST",
+                "-Wall",
+                "-Werror",
+                "-Wno-unused-function",
+                "-I",
+                inc.to_str().unwrap(),
+                drv.to_str().unwrap(),
+                "-o",
+                exe.to_str().unwrap(),
+                "-lm",
             ],
             "host kernel driver",
         );
@@ -125,7 +170,9 @@ fn run(l: &Launch, mem: &mut HashMap<u64, Vec<u8>>, rv32: bool) -> Result<()> {
     for a in &l.args {
         match *a {
             Arg::Buf(b) => {
-                let data = mem.get(&b.0).ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?;
+                let data = mem
+                    .get(&b.0)
+                    .ok_or_else(|| Error::InvalidArgument("unknown buffer".into()))?;
                 input.push(0);
                 put(&mut input, data.len() as u32);
                 input.extend_from_slice(data);
@@ -154,7 +201,11 @@ fn run(l: &Launch, mem: &mut HashMap<u64, Vec<u8>>, rv32: bool) -> Result<()> {
     } else {
         Command::new(driver())
     };
-    let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)))?;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Os(e.raw_os_error().unwrap_or(0)))?;
     child.stdin.take().unwrap().write_all(&input).unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "driver failed for {}", l.symbol);

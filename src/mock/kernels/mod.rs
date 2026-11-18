@@ -1,11 +1,14 @@
 //! Host implementations of the Emulated semantics, one module per op kind
 //! (mirrors [`crate::ops`] and `kernels/src/*.cl`).
 
+mod act;
+mod conv;
 mod convert;
 mod gemm;
 mod int;
 mod quantize;
 mod reduce;
+mod resize;
 
 use std::collections::HashMap;
 
@@ -28,6 +31,9 @@ pub(super) fn run(mem: &mut Mem, sig: OpSig, args: &[Arg]) -> Result<()> {
         OpSig::Unpack { from } => int::unpack(mem, from, args),
         OpSig::Gemm { a, b, acc } => gemm::run(mem, a, b, acc, args),
         OpSig::AbsmaxBlock { src } => reduce::absmax_block(mem, src, args),
+        OpSig::Act { src, dst, act } => act::run(mem, src, dst, act, args),
+        OpSig::Conv2d { x, w, y, bias } => conv::run(mem, x, w, y, bias, args),
+        OpSig::Resize { src, dst, mode } => resize::run(mem, src, dst, mode, args),
         #[allow(unreachable_patterns)]
         _ => None,
     };

@@ -7,6 +7,9 @@
 //! | [`int`] | I8/U8 <-> packed I4/U4/I2/I1 | `pack_<to>`, `unpack_<from>` |
 //! | [`gemm`](mod@gemm) | matrix multiply | `gemm[_strided]_<a>_<b>_<acc>` |
 //! | [`reduce`] | per-block absmax | `absmax_block_<src>` |
+//! | [`act`](mod@act) | activations (exact `exp`/`tanh`/`gelu`) | `act_<kind>_<src>_<dst>` |
+//! | [`conv`] | direct 2-D convolution, optional bias + fused activation | `conv2d[_bias]_<x>_<w>_<y>` |
+//! | [`resize`](mod@resize) | nearest / bilinear image resize | `resize_<mode>_<src>_<dst>` |
 //!
 //! The element traits ([`FloatElem`](crate::elem::FloatElem),
 //! [`Quantize`](crate::elem::Quantize), [`PackedInt`](crate::elem::PackedInt), ...)
@@ -38,17 +41,24 @@
 //! that has the kernel), [`Choice::Down`] forces one tier (`auto_down`, for
 //! test matrices and benchmarks).
 
+pub mod act;
+pub mod conv;
 pub mod convert;
 pub mod gemm;
 pub mod int;
 pub mod quantize;
 pub mod reduce;
+pub mod resize;
 
 pub use convert::convert;
 pub use gemm::{GemmShape, gemm};
 pub use int::{pack, unpack};
 pub use quantize::{dequantize, quantize};
+pub use act::{Act, act};
+pub use conv::{Conv2dShape, conv2d};
 pub use reduce::absmax_block;
+pub use resize::resize;
+pub use crate::runtime::backend::ResizeMode;
 
 use crate::elem::Elem;
 use crate::runtime::backend::{Arg, KernelKey, OpSig};
@@ -67,9 +77,18 @@ pub enum Choice {
 
 pub(crate) fn key(s: &Stream, choice: Choice, sig: OpSig, batched: bool) -> Result<KernelKey> {
     let name = sig.name(batched);
+    let exact = s.exactness() == crate::Exactness::Bit;
     let tier = match choice {
-        Choice::Up => crate::auto_up::choose(s.device(), sig, batched)?,
-        Choice::Down(t) => t,
+        Choice::Up => crate::auto_up::choose_with(s.device(), sig, batched, exact)?,
+        Choice::Down(t) => {
+            if exact && !sig.exact_on(t) {
+                return Err(Error::Unsupported(format!(
+                    "{name} on tier {} is not bit-exact; this stream is Exactness::Bit (game state)",
+                    t.name()
+                )));
+            }
+            t
+        }
     };
     let key = KernelKey { name, sig, tier };
     if s.device().backend().supports(&key) {
@@ -95,8 +114,23 @@ pub(crate) fn unary<F: Elem, T: Elem>(
     if src.len() != dst.len() {
         return Err(invalid(format!("{}: {} elements into {}", sig.name(false), src.len(), dst.len())));
     }
+    unary_args(s, choice, sig, src, dst, extra.as_slice())
+}
+
+/// [`unary`] with any number of trailing scalar arguments.
+pub(crate) fn unary_args<F: Elem, T: Elem>(
+    s: &mut Stream,
+    choice: Choice,
+    sig: OpSig,
+    src: &DeviceBuffer<F>,
+    dst: &mut DeviceBuffer<T>,
+    extra: &[Arg],
+) -> Result<Pending<()>> {
+    if src.len() != dst.len() {
+        return Err(invalid(format!("{}: {} elements into {}", sig.name(false), src.len(), dst.len())));
+    }
     let k = key(s, choice, sig, false)?;
     let mut args = vec![Arg::Buf(src.raw.id), Arg::Buf(dst.raw.id), Arg::U32(len_u32(src.len())?)];
-    args.extend(extra);
-    s.launch(&k, &[&src.raw, &dst.raw], &args)
+    args.extend_from_slice(extra);
+    s.launch(&k, &[&src.raw], &[&dst.raw], &args)
 }

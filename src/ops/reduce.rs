@@ -22,5 +22,5 @@ pub fn absmax_block<S: Elem>(
     }
     let k = key(s, choice, OpSig::AbsmaxBlock { src: S::FORMAT }, false)?;
     let args = [Arg::Buf(src.raw.id), Arg::Buf(dst.raw.id), Arg::U32(len_u32(src.len())?), Arg::U32(len_u32(block)?)];
-    s.launch(&k, &[&src.raw, &dst.raw], &args)
+    s.launch(&k, &[&src.raw], &[&dst.raw], &args)
 }

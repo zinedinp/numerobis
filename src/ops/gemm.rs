@@ -80,5 +80,11 @@ pub fn gemm<A: Elem, B: Elem, C: Acc>(
         alpha.into(),
         beta.into(),
     ];
-    s.launch(&kk, &[&a.raw, &b.raw, &c.raw], &args)
+    // C is an input too when beta != 0.
+    let beta_zero = matches!(args[8], Arg::F32(v) if v == 0.0) || args[8] == Arg::I32(0);
+    if beta_zero {
+        s.launch(&kk, &[&a.raw, &b.raw], &[&c.raw], &args)
+    } else {
+        s.launch(&kk, &[&a.raw, &b.raw, &c.raw], &[&c.raw], &args)
+    }
 }

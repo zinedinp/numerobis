@@ -26,8 +26,22 @@ pub fn same(a: f32, b: f32) -> bool {
 
 pub fn edge_values(rng: &mut Rng) -> Vec<f32> {
     let mut v = vec![
-        0.0, -0.0, 1.0, -1.0, 0.5, 448.0, 449.0, 480.0, 1e6, -1e6, 6.0, 7.0, 1e-9,
-        f32::INFINITY, f32::NEG_INFINITY, f32::NAN,
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        0.5,
+        448.0,
+        449.0,
+        480.0,
+        1e6,
+        -1e6,
+        6.0,
+        7.0,
+        1e-9,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
     ];
     v.extend(rng.vec(240, 600.0));
     v.extend(rng.vec(256, 0.01));
@@ -45,14 +59,20 @@ pub fn bytes<E: Elem>(s: &mut Stream, b: &DeviceBuffer<E>) -> Vec<u8> {
 /// Float format -> host `f32` through the device.
 pub fn float_to_host<E: FloatElem>(s: &mut Stream, b: &DeviceBuffer<E>) -> Vec<f32> {
     let mut o = s.alloc::<F32>(b.len()).unwrap();
-    ops::convert(s, Choice::Up, b, &mut o, Overflow::Saturate).unwrap().wait().unwrap();
+    ops::convert(s, Choice::Up, b, &mut o, Overflow::Saturate)
+        .unwrap()
+        .wait()
+        .unwrap();
     download(s, &o)
 }
 
 /// Block format -> host `f32` through the device.
 pub fn block_to_host<E: BlockElem>(s: &mut Stream, b: &DeviceBuffer<E>) -> Vec<f32> {
     let mut o = s.alloc::<F32>(b.len()).unwrap();
-    ops::dequantize(s, Choice::Up, b, &mut o).unwrap().wait().unwrap();
+    ops::dequantize(s, Choice::Up, b, &mut o)
+        .unwrap()
+        .wait()
+        .unwrap();
     download(s, &o)
 }
 
