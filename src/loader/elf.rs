@@ -286,6 +286,8 @@ impl<'a> Elf<'a> {
 mod tests {
     use super::*;
 
+    /// Its own binary is an ELF file on Linux only.
+    #[cfg(target_os = "linux")]
     #[test]
     fn parses_own_test_binary() {
         let exe = std::fs::read("/proc/self/exe").unwrap();

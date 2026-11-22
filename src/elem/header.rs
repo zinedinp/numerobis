@@ -85,7 +85,10 @@ mod tests {
         if std::env::var_os("NUMEROBIS_BLESS").is_some() {
             std::fs::write(path, &want).unwrap();
         }
-        let have = std::fs::read_to_string(path).unwrap_or_default();
+        // A Windows checkout may hold it with CRLF line ends.
+        let have = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert!(
             have == want,
             "{path} is stale; rerun with NUMEROBIS_BLESS=1"

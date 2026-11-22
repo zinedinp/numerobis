@@ -1,12 +1,13 @@
 [package]
 name = "numerobis"
-version = "0.3.2-alpha"
+version = "0.3.3-alpha"
 authors = ["Zinedin Polic"]
 edition = "2024"
 rust-version = "1.100.0"
 description = "Raw accelerator computing (GPU matrix engines, NPUs) on top of miraculix formats"
 license = "MIT OR Apache-2.0"
 categories = ["hardware-support"]
+repository = "https://github.com/zinedinp/numerobis"
 
 [features]
 default = []
@@ -27,7 +28,10 @@ hip = []
 mock = []
 
 [dependencies]
-miraculix = { version = "=0.5.7-beta", default-features = false }
+miraculix = { version = "=0.5.8-beta", default-features = false }
+
+# The raw backends and dma-bufs are Linux kernel UAPI.
+[target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.191"
 
 [dev-dependencies]

@@ -19,6 +19,7 @@
 //! | [`intel`], [`amd`], [`nvidia`], [`tt`], [`v3d`] | one module per GPU / card vendor |
 //! | [`npu`] | `accel` subsystem base plus one module per NPU |
 //! | [`loader`] | kernel binary containers (ELF) |
+//! | [`pci`] | which GPU a PCI vendor/device id is, and its driver version: every OS, no backend |
 //! | `mock` | host oracle backend (feature `mock`) |
 //!
 //! ```
@@ -50,6 +51,7 @@ pub mod loader;
 #[cfg(feature = "mock")]
 pub mod mock;
 pub mod ops;
+pub mod pci;
 pub mod runtime;
 pub mod tiers;
 

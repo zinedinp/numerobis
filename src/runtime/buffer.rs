@@ -1,6 +1,7 @@
 //! Device buffers.
 
 use std::marker::PhantomData;
+#[cfg(target_os = "linux")]
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -106,7 +107,8 @@ impl<E: Elem> DeviceBuffer<E> {
 
     /// Exports the buffer as a dma-buf (zero-copy sharing with Vulkan, KMS,
     /// V4L2, other accelerators). Synchronise with [`Pending::signal_timeline`](crate::Pending::signal_timeline)
-    /// or a sync file before the consumer reads it.
+    /// or a sync file before the consumer reads it. Linux only.
+    #[cfg(target_os = "linux")]
     pub fn export_dmabuf(&self) -> crate::Result<OwnedFd> {
         self.raw.backend.export_dmabuf(self.raw.id)
     }

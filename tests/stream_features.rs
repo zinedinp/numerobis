@@ -4,6 +4,7 @@
 mod common;
 
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use common::*;
@@ -12,6 +13,7 @@ use numerobis::engine::DeviceClass;
 use numerobis::mock::MockBackend;
 use numerobis::ops::{self, Act, Conv2dShape};
 use numerobis::{Bind, Choice, Device, Exactness, GemmShape, Tier};
+#[cfg(target_os = "linux")]
 use std::os::fd::AsFd as _;
 
 /// A device whose top tier is a vendor matrix tier (not bit-exact for GEMM).
@@ -183,6 +185,8 @@ fn bit_streams_never_use_or_read_approximate_tiers() {
     d.replay(&cl, &[]).unwrap().wait().unwrap();
 }
 
+/// dma-bufs and sync files are Linux kernel objects.
+#[cfg(target_os = "linux")]
 #[test]
 fn dmabuf_shares_memory_between_devices() {
     let (d1, d2) = (Device::mock(), Device::mock());
@@ -211,6 +215,8 @@ fn dmabuf_shares_memory_between_devices() {
     );
 }
 
+/// dma-bufs and sync files are Linux kernel objects.
+#[cfg(target_os = "linux")]
 #[test]
 fn timeline_and_sync_file_interop() {
     let Ok(tl) = numerobis::sync::Timeline::new() else {
@@ -259,6 +265,8 @@ fn timeline_and_sync_file_interop() {
     );
 }
 
+/// dma-bufs and sync files are Linux kernel objects.
+#[cfg(target_os = "linux")]
 #[test]
 fn host_dmabuf_api() {
     use numerobis::dmabuf::{self, HostDmabuf};
@@ -282,6 +290,8 @@ fn host_dmabuf_api() {
     assert!(dmabuf::prime_export(fd.as_fd(), 1).is_err());
 }
 
+/// dma-bufs and sync files are Linux kernel objects.
+#[cfg(target_os = "linux")]
 #[test]
 fn host_dmabuf_into_device_without_copy() {
     use numerobis::dmabuf::HostDmabuf;

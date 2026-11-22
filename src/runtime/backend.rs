@@ -1,5 +1,6 @@
 //! The `Backend` trait: the only thing a raw, comfort or mock target implements.
 
+#[cfg(target_os = "linux")]
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::time::Duration;
 
@@ -254,6 +255,8 @@ pub trait Backend: Send + Sync + 'static {
     }
 
     /// Exports the buffer as a dma-buf (DRM PRIME, udmabuf, tt-kmd TLB export).
+    /// dma-bufs and sync files are Linux kernel objects: Linux only.
+    #[cfg(target_os = "linux")]
     fn export_dmabuf(&self, _id: BufId) -> Result<OwnedFd> {
         Err(crate::Error::Unsupported(format!(
             "dma-buf export on {}",
@@ -261,6 +264,7 @@ pub trait Backend: Send + Sync + 'static {
         )))
     }
     /// Imports a dma-buf of `bytes` bytes as a buffer of this device, without a copy.
+    #[cfg(target_os = "linux")]
     fn import_dmabuf(&self, _fd: BorrowedFd<'_>, _bytes: usize) -> Result<BufId> {
         Err(crate::Error::Unsupported(format!(
             "dma-buf import on {}",
@@ -269,6 +273,7 @@ pub trait Backend: Send + Sync + 'static {
     }
     /// A kernel `sync_file` for `fence`, if the driver has dma-fences (DRM
     /// drivers). `None`: the runtime bridges through a DRM timeline syncobj.
+    #[cfg(target_os = "linux")]
     fn export_sync_file(&self, _fence: Fence) -> Option<OwnedFd> {
         None
     }
