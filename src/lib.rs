@@ -20,6 +20,7 @@
 //! | [`npu`] | `accel` subsystem base plus one module per NPU |
 //! | [`loader`] | kernel binary containers (ELF) |
 //! | [`pci`] | which GPU a PCI vendor/device id is, and its driver version: every OS, no backend |
+//! | [`vulkan`] | Vulkan versions, feature bits per version, and a waterfall picking each capability's best route: no bindings, the host calls Vulkan |
 //! | `mock` | host oracle backend (feature `mock`) |
 //!
 //! ```
@@ -54,6 +55,7 @@ pub mod ops;
 pub mod pci;
 pub mod runtime;
 pub mod tiers;
+pub mod vulkan;
 
 // Vendors.
 pub mod amd;

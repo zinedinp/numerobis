@@ -16,9 +16,9 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "miraculix"
-version = "0.5.8-beta"
+version = "0.6.1-beta"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bf487fd0ab6cbcb8e23baefdfa2fff4fc3a32aea2cf500f8a572c8920fa8a51"
+checksum = "d309f8f1f6a02f361d724946a6f1b16049253a37906c5d6da40a9236a3fa7482"
 dependencies = [
  "libc",
  "raw-cpuid",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "numerobis"
-version = "0.3.3-alpha"
+version = "0.4.0-beta"
 dependencies = [
  "libc",
  "miraculix",

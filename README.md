@@ -100,6 +100,60 @@ Every op takes a `Choice`:
 - `Choice::Down(tier)`: exactly that tier, or `Error::Unsupported`. Useful to
   compare tiers against each other.
 
+## Vulkan feature waterfall (`numerobis::vulkan`)
+
+For a graphics host that wants the best Vulkan path the system allows, on
+every OS and without any backend feature. Like `pci` it is data plus logic:
+no Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
+...), and the structs it hands over are plain C layouts.
+
+- `vulkan::features`: per core version (1.0 to 1.4) its feature bits in
+  declaration order, the struct that holds them, the extension each bit came
+  from, and the extensions the version promoted.
+- `vulkan::ops`: the capabilities, one module per area (`draw`, `memory`,
+  `shader`, `descriptor`, `sync`, `render`). Each has its routes in fallback
+  order: newest core version first, then the extensions that offered it
+  before. Examples: `draw_indirect_count` is core 1.2 or
+  `VK_KHR_draw_indirect_count`, `buffer_device_address` is core 1.2 or
+  `VK_KHR_buffer_device_address`, `mesh_shader` is `VK_EXT_mesh_shader`
+  (with its 1.2 dependencies as extensions on 1.1).
+- `Probe` / `Plan`: the waterfall.
+
+```rust
+use numerobis::vulkan::{ApiVersion, Offer, Op, Probe, app_version};
+
+// 1. vkCreateInstance with this apiVersion (`None` when the loader has no
+//    vkEnumerateInstanceVersion: a 1.0 loader rejects anything above 1.0).
+let app = app_version(loader_version, ApiVersion::NEWEST);
+// 2. The picked device: its apiVersion and vkEnumerateDeviceExtensionProperties.
+let offer = Offer::new(app, ApiVersion::from_raw(props.api_version), extension_names);
+let mut probe = Probe::new(offer, &[Op::DrawIndirectCount, Op::BufferDeviceAddress]);
+// 3. One feature query; `features2()` is a ready VkPhysicalDeviceFeatures2 chain.
+unsafe { get_physical_device_features2(physical, probe.features2().cast()) };
+let plan = probe.plan();
+log::info!("{plan}");
+// 4. vkCreateDevice: pNext = plan.device_chain().features2(), plus plan.extensions().
+```
+
+The device works at the lower of the instance's `apiVersion` and its own
+version. On that version the first available route decides; if its bit is
+off, the op is missing. Later routes would read the same hardware bit
+through another struct, and chaining a `VkPhysicalDeviceVulkan1xFeatures`
+together with a single struct it absorbed is invalid. `Plan::route` tells the
+host whether a core or an extension entry point applies (core
+`vkCmdDrawIndexedIndirectCount` vs. its `KHR` twin). The log has one line
+per op:
+
+```text
+Vulkan 1.1 (instance asks 1.1, device has 1.3)
+  + draw.draw_indirect_count: VK_KHR_draw_indirect_count [skipped core 1.2 (VkPhysicalDeviceVulkan12Features.drawIndirectCount): needs 1.2]
+  - shader.float16: no route [skipped core 1.2 (...): needs 1.2; VK_KHR_shader_float16_int8 (...): not offered]
+  extensions: VK_KHR_draw_indirect_count
+```
+
+Field order and `sType` values are checked against the `vk.xml` layouts (ash
+1.3.281 for 1.0-1.3, the spec for `VkPhysicalDeviceVulkan14Features`).
+
 ## Usage
 
 ```rust
