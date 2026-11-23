@@ -50,7 +50,7 @@ impl Fd {
                 return Ok(());
             }
             match errno() {
-                libc::EINTR | libc::EAGAIN => continue,
+                libc::EINTR | libc::EAGAIN => {}
                 e => return Err(Error::Os(e)),
             }
         }
@@ -83,29 +83,45 @@ impl View {
     /// Volatile 32-bit read at byte offset `off`.
     pub(crate) fn read32(&self, off: usize) -> u32 {
         assert!(off + 4 <= self.len);
-        // SAFETY: in bounds, aligned by the callers' layouts.
-        unsafe { self.ptr.add(off).cast::<u32>().read_volatile() }
+        debug_assert!(off.is_multiple_of(4), "unaligned 32-bit access at {off:#x}");
+        // SAFETY: in bounds; the mapping is page aligned and `off` a multiple of 4.
+        #[allow(clippy::cast_ptr_alignment, reason = "alignment checked above")]
+        unsafe {
+            self.ptr.add(off).cast::<u32>().read_volatile()
+        }
     }
 
     /// Volatile 32-bit write at byte offset `off`.
     pub(crate) fn write32(&self, off: usize, v: u32) {
         assert!(off + 4 <= self.len);
-        // SAFETY: in bounds, aligned by the callers' layouts.
-        unsafe { self.ptr.add(off).cast::<u32>().write_volatile(v) }
+        debug_assert!(off.is_multiple_of(4), "unaligned 32-bit access at {off:#x}");
+        // SAFETY: in bounds; the mapping is page aligned and `off` a multiple of 4.
+        #[allow(clippy::cast_ptr_alignment, reason = "alignment checked above")]
+        unsafe {
+            self.ptr.add(off).cast::<u32>().write_volatile(v);
+        }
     }
 
     /// Volatile 64-bit read at byte offset `off`.
     pub(crate) fn read64(&self, off: usize) -> u64 {
         assert!(off + 8 <= self.len);
-        // SAFETY: in bounds, aligned by the callers' layouts.
-        unsafe { self.ptr.add(off).cast::<u64>().read_volatile() }
+        debug_assert!(off.is_multiple_of(8), "unaligned 64-bit access at {off:#x}");
+        // SAFETY: in bounds; the mapping is page aligned and `off` a multiple of 8.
+        #[allow(clippy::cast_ptr_alignment, reason = "alignment checked above")]
+        unsafe {
+            self.ptr.add(off).cast::<u64>().read_volatile()
+        }
     }
 
     /// Volatile 64-bit write at byte offset `off`.
     pub(crate) fn write64(&self, off: usize, v: u64) {
         assert!(off + 8 <= self.len);
-        // SAFETY: in bounds, aligned by the callers' layouts.
-        unsafe { self.ptr.add(off).cast::<u64>().write_volatile(v) }
+        debug_assert!(off.is_multiple_of(8), "unaligned 64-bit access at {off:#x}");
+        // SAFETY: in bounds; the mapping is page aligned and `off` a multiple of 8.
+        #[allow(clippy::cast_ptr_alignment, reason = "alignment checked above")]
+        unsafe {
+            self.ptr.add(off).cast::<u64>().write_volatile(v);
+        }
     }
 
     pub(crate) fn write_bytes(&self, off: usize, src: &[u8]) {
@@ -143,8 +159,9 @@ impl Map {
         fd: i32,
         off: u64,
     ) -> Result<Map> {
+        let off = libc::off_t::try_from(off).map_err(|_| Error::Os(libc::EINVAL))?;
         // SAFETY: plain mmap; MAP_FIXED callers own the target range.
-        let p = unsafe { libc::mmap(addr as *mut _, len, prot, flags, fd, off as libc::off_t) };
+        let p = unsafe { libc::mmap(addr as *mut _, len, prot, flags, fd, off) };
         if p == libc::MAP_FAILED {
             Err(Error::Os(errno()))
         } else {
@@ -152,7 +169,7 @@ impl Map {
         }
     }
 
-    /// Leaks the mapping (the range stays mapped, e.g. when MAP_FIXED over a reservation).
+    /// Leaks the mapping (the range stays mapped, e.g. when `MAP_FIXED` over a reservation).
     pub(crate) fn forget(self) {
         core::mem::forget(self);
     }

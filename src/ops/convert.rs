@@ -12,6 +12,14 @@ use crate::runtime::{DeviceBuffer, Pending, Result, Stream};
 ///
 /// `overflow` chooses between saturating and producing Inf/NaN for values
 /// above the target's largest finite value (formats with neither always saturate).
+///
+/// # Errors
+///
+/// [`Error::InvalidArgument`](crate::Error::InvalidArgument) for lengths that differ.
+/// [`Error::Unsupported`](crate::Error::Unsupported) when the [`Choice`] finds no
+/// kernel for these formats (on an [`Exactness::Bit`](crate::Exactness::Bit) stream: none that is
+/// bit-exact); [`Error::InvalidArgument`](crate::Error::InvalidArgument) also for a buffer of
+/// another device or an approximate input on such a stream. Errors of the device pass through.
 pub fn convert<F: FloatElem, T: FloatElem>(
     s: &mut Stream,
     choice: Choice,
@@ -21,7 +29,7 @@ pub fn convert<F: FloatElem, T: FloatElem>(
 ) -> Result<Pending<()>> {
     let ov = match overflow {
         Overflow::Saturate => 0,
-        _ => 1,
+        Overflow::Special => 1,
     };
     unary(
         s,

@@ -11,6 +11,7 @@ use miraculix::formats::Overflow;
 use crate::elem::Format;
 
 /// Device bytes -> `f32`, for any non-integer format (and integers, exactly).
+#[must_use]
 pub fn decode_f32(fmt: Format, b: &[u8], len: usize) -> Option<Vec<f32>> {
     if fmt.is_integer() {
         return Some(
@@ -28,6 +29,7 @@ pub fn decode_f32(fmt: Format, b: &[u8], len: usize) -> Option<Vec<f32>> {
 }
 
 /// `f32` -> device bytes for float and quantizable block formats.
+#[must_use]
 pub fn encode_f32(fmt: Format, src: &[f32], overflow: Overflow) -> Option<Vec<u8>> {
     if fmt.is_block_scaled() {
         block::encode(fmt, src)

@@ -59,7 +59,12 @@ fn amd_hsaco() {
 #[test]
 fn nvidia_cubin() {
     assert_eq!(
-        check("nvidia", "cubin", machine::CUDA, |s| s.to_string()),
+        check(
+            "nvidia",
+            "cubin",
+            machine::CUDA,
+            std::string::ToString::to_string
+        ),
         5
     );
 }

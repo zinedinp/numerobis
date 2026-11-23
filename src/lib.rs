@@ -12,8 +12,16 @@
 //! |---|---|
 //! | [`elem`] | element types, split into `float`, `int`, `block` |
 //! | [`ops`] | the API, one module per calculation kind (`convert`, `quantize`, `int`, `gemm`, `reduce`, `act`, `conv`, `resize`) |
-//! | [`dmabuf`] | `HostDmabuf`, PRIME helpers: zero-copy sharing with Vulkan/KMS/V4L2 |
-//! | [`sync`] | `SyncFile` / `Timeline`: fences shared with Vulkan semaphores |
+#![cfg_attr(
+    target_os = "linux",
+    doc = "| [`dmabuf`] | `HostDmabuf`, PRIME helpers: zero-copy sharing with Vulkan/KMS/V4L2 |",
+    doc = "| [`sync`] | `SyncFile` / `Timeline`: fences shared with Vulkan semaphores |"
+)]
+#![cfg_attr(
+    not(target_os = "linux"),
+    doc = "| `dmabuf` | Linux only: `HostDmabuf`, PRIME helpers, zero-copy sharing with Vulkan/KMS/V4L2 |",
+    doc = "| `sync` | Linux only: `SyncFile` / `Timeline`, fences shared with Vulkan semaphores |"
+)]
 //! | [`runtime`] | `Backend` trait, `Device`, `Stream`, `DeviceBuffer`, `CommandList`, `Exactness`, dma-buf, errors |
 //! | [`auto_up`], [`auto_down`], [`tiers`] | tier selection over the vendor ladders |
 //! | [`intel`], [`amd`], [`nvidia`], [`tt`], [`v3d`] | one module per GPU / card vendor |

@@ -1,6 +1,15 @@
 //! `ops::gemm`: float formats against an f64 reference with tolerance, integer
 //! formats exactly. Every tier `auto_down` lists is run.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "test data is built with bit-level casts; shapes are named as in the math"
+)]
+
 mod common;
 
 use common::*;
@@ -8,17 +17,17 @@ use numerobis::elem::*;
 use numerobis::runtime::OpSig;
 use numerobis::{Choice, DeviceBuffer, GemmShape, Overflow, Stream, auto_down, ops};
 
-/// `|got - ref| <= tol * sum|a*b|` per element; B is NxK.
+/// `|got - ref| <= tol * sum|a*b|` per element; B is `NxK`.
 fn check(got: &[f32], a: &[f32], b: &[f32], (m, n, k): (usize, usize, usize), tol: f64) {
     for i in 0..m {
         for j in 0..n {
             let (mut r, mut mag) = (0f64, 0f64);
             for p in 0..k {
-                let t = a[i * k + p] as f64 * b[j * k + p] as f64;
+                let t = f64::from(a[i * k + p]) * f64::from(b[j * k + p]);
                 r += t;
                 mag += t.abs();
             }
-            let g = got[i * n + j] as f64;
+            let g = f64::from(got[i * n + j]);
             assert!(
                 (g - r).abs() <= tol * mag.max(1e-30),
                 "C[{i},{j}] = {g}, want {r} (+-{})",
@@ -57,7 +66,7 @@ float_input!(F32, Tf32, F16, Bf16, E4M3Fn, E5M2Fnuz, E2M1);
 block_input!(Mx<E2M1>, Mx<E4M3Fn>, Nvfp4, Bfp<M3>);
 
 fn case<A: Input>(s: &mut Stream, m: usize, n: usize, k: usize) {
-    let eps = 64.0 * f32::EPSILON as f64;
+    let eps = 64.0 * f64::from(f32::EPSILON);
     let mut rng = Rng(42 + k as u64);
     let (ah, bh) = (rng.vec(m * k, 4.0), rng.vec(n * k, 4.0));
     let (af, bf) = (s.upload::<F32>(&ah).unwrap(), s.upload::<F32>(&bh).unwrap());
@@ -155,7 +164,10 @@ fn int_exact_alpha_beta_batched() {
             for i in 0..m {
                 for j in 0..n {
                     let dot: i32 = (0..k)
-                        .map(|p| a[z * m * k + i * k + p] as i32 * b[z * n * k + j * k + p] as i32)
+                        .map(|p| {
+                            i32::from(a[z * m * k + i * k + p])
+                                * i32::from(b[z * n * k + j * k + p])
+                        })
                         .sum();
                     want[z * m * n + i * n + j] = 3 * dot - 2 * c0[z * m * n + i * n + j];
                 }

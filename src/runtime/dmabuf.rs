@@ -5,12 +5,12 @@
 //!   a dma-buf by `/dev/udmabuf`; a plain memfd where that is not accessible),
 //!   or the CPU mapping of a dma-buf someone else exported. Every access is
 //!   bracketed with `DMA_BUF_IOCTL_SYNC`, so caches stay coherent on non-coherent
-//!   SoCs. Hand [`HostDmabuf::as_fd`] to [`Stream::import_dmabuf`](crate::Stream::import_dmabuf)
+//!   `SoCs`. Hand [`HostDmabuf::as_fd`] to [`Stream::import_dmabuf`](crate::Stream::import_dmabuf)
 //!   to use it on a device without a copy.
 //! - [`prime_export`] / [`prime_import`]: GEM handle <-> dma-buf on a DRM device
 //!   (`DRM_IOCTL_PRIME_*`), the building blocks for the `export_dmabuf` /
 //!   `import_dmabuf` hooks of DRM backends (xe, amdgpu, v3d, accel), in-tree or
-//!   through [`Device::from_backend`](crate::Device::from_backend). On SoCs (Pi,
+//!   through [`Device::from_backend`](crate::Device::from_backend). On `SoCs` (Pi,
 //!   Rockchip, iGPUs) that is the path between camera, display, Vulkan and NPU.
 //!
 //! ```
@@ -82,13 +82,18 @@ unsafe fn ioctl<T>(fd: RawFd, req: u64, arg: *mut T) -> Result<i32> {
             return Ok(r);
         }
         match errno() {
-            libc::EINTR | libc::EAGAIN => continue,
+            libc::EINTR | libc::EAGAIN => {}
             e => return Err(Error::Os(e)),
         }
     }
 }
 
 /// GEM `handle` of the DRM device `drm` -> dma-buf (read-write, close-on-exec).
+///
+/// # Errors
+///
+/// [`Error::Os`] when the driver refuses the export
+/// (`DRM_IOCTL_PRIME_HANDLE_TO_FD`).
 pub fn prime_export(drm: BorrowedFd<'_>, handle: u32) -> Result<OwnedFd> {
     let mut p = PrimeHandle {
         handle,
@@ -96,24 +101,33 @@ pub fn prime_export(drm: BorrowedFd<'_>, handle: u32) -> Result<OwnedFd> {
         fd: -1,
     };
     // SAFETY: PrimeHandle matches DRM_IOCTL_PRIME_HANDLE_TO_FD.
-    unsafe { ioctl(drm.as_raw_fd(), PRIME_HANDLE_TO_FD, &mut p) }?;
+    unsafe { ioctl(drm.as_raw_fd(), PRIME_HANDLE_TO_FD, &raw mut p) }?;
     // SAFETY: the kernel returned a new descriptor we own.
     Ok(unsafe { OwnedFd::from_raw_fd(p.fd) })
 }
 
 /// dma-buf -> GEM handle on the DRM device `drm` (close it with the driver's
 /// `GEM_CLOSE` when done).
+///
+/// # Errors
+///
+/// [`Error::Os`] when the driver refuses the import
+/// (`DRM_IOCTL_PRIME_FD_TO_HANDLE`).
 pub fn prime_import(drm: BorrowedFd<'_>, dmabuf: BorrowedFd<'_>) -> Result<u32> {
     let mut p = PrimeHandle {
         fd: dmabuf.as_raw_fd(),
         ..Default::default()
     };
     // SAFETY: PrimeHandle matches DRM_IOCTL_PRIME_FD_TO_HANDLE.
-    unsafe { ioctl(drm.as_raw_fd(), PRIME_FD_TO_HANDLE, &mut p) }?;
+    unsafe { ioctl(drm.as_raw_fd(), PRIME_FD_TO_HANDLE, &raw mut p) }?;
     Ok(p.handle)
 }
 
 /// Size in bytes of a dma-buf (or memfd).
+///
+/// # Errors
+///
+/// [`Error::Os`] when `fd` cannot seek.
 pub fn size(fd: BorrowedFd<'_>) -> Result<usize> {
     // SAFETY: lseek on a borrowed descriptor; dma-bufs report their size via SEEK_END.
     let end = unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_END) };
@@ -122,7 +136,7 @@ pub fn size(fd: BorrowedFd<'_>) -> Result<usize> {
     }
     // SAFETY: as above.
     unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_SET) };
-    Ok(end as usize)
+    usize::try_from(end).map_err(|_| Error::Os(libc::EOVERFLOW))
 }
 
 /// Host memory or a foreign dma-buf, mapped for the CPU.
@@ -154,12 +168,21 @@ unsafe impl Sync for HostDmabuf {}
 impl HostDmabuf {
     /// `len` bytes of zeroed host memory (rounded up to a page in the fd).
     /// A real dma-buf when `/dev/udmabuf` is accessible (see [`is_dmabuf`](Self::is_dmabuf)).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the memory cannot be created, sized or mapped.
     pub fn new(len: usize) -> Result<HostDmabuf> {
         let (fd, dmabuf) = alloc(len)?;
         Self::with_fd(fd, len, dmabuf)
     }
 
     /// Maps the first `len` bytes of a dma-buf another driver or process exported.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] when the dma-buf is shorter than
+    /// `len`, [`Error::Os`] when it cannot be mapped.
     pub fn map(fd: BorrowedFd<'_>, len: usize) -> Result<HostDmabuf> {
         let have = size(fd)?;
         if have < len {
@@ -173,11 +196,11 @@ impl HostDmabuf {
         // A kernel dma-buf answers the sync ioctl; a memfd says ENOTTY.
         let mut sy = DmaBufSync { flags: SYNC_READ };
         // SAFETY: DmaBufSync matches DMA_BUF_IOCTL_SYNC.
-        let dmabuf = unsafe { ioctl(fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC, &mut sy) }.is_ok();
+        let dmabuf = unsafe { ioctl(fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC, &raw mut sy) }.is_ok();
         if dmabuf {
             sy.flags = SYNC_READ | SYNC_END;
             // SAFETY: as above, closes the bracket just opened.
-            let _ = unsafe { ioctl(fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC, &mut sy) };
+            let _ = unsafe { ioctl(fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC, &raw mut sy) };
         }
         Self::with_fd(fd, len, dmabuf)
     }
@@ -192,21 +215,28 @@ impl HostDmabuf {
         })
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// `true`: a kernel dma-buf, importable by drivers. `false`: a memfd
     /// (shareable with processes and the mock backend, not with drivers).
+    #[must_use]
     pub fn is_dmabuf(&self) -> bool {
         self.dmabuf
     }
 
     /// A new descriptor for the same memory (to pass to another process or API).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the descriptor cannot be duplicated.
     pub fn try_clone_fd(&self) -> Result<OwnedFd> {
         self.fd
             .try_clone()
@@ -232,6 +262,10 @@ impl HostDmabuf {
     }
 
     /// Copies `dst.len()` bytes from offset `off` out (CPU read bracket).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] for a range outside the buffer.
     pub fn read(&self, off: usize, dst: &mut [u8]) -> Result<()> {
         self.range(off, dst.len())?;
         self.sync(SYNC_READ);
@@ -241,6 +275,10 @@ impl HostDmabuf {
     }
 
     /// Copies `src` in at offset `off` (CPU write bracket).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] for a range outside the buffer.
     pub fn write(&self, off: usize, src: &[u8]) -> Result<()> {
         self.range(off, src.len())?;
         self.sync(SYNC_WRITE);
@@ -271,8 +309,9 @@ fn alloc(len: usize) -> Result<(OwnedFd, bool)> {
     }
     // SAFETY: we own mfd.
     let memfd = unsafe { OwnedFd::from_raw_fd(mfd) };
+    let len = libc::off_t::try_from(size).map_err(|_| Error::Os(libc::EFBIG))?;
     // SAFETY: valid descriptor.
-    if unsafe { libc::ftruncate(mfd, size as libc::off_t) } != 0 {
+    if unsafe { libc::ftruncate(mfd, len) } != 0 {
         return Err(Error::Os(errno()));
     }
     // udmabuf requires F_SEAL_SHRINK.
@@ -280,14 +319,14 @@ fn alloc(len: usize) -> Result<(OwnedFd, bool)> {
     unsafe { libc::fcntl(mfd, libc::F_ADD_SEALS, libc::F_SEAL_SHRINK) };
     if let Ok(dev) = Fd::open("/dev/udmabuf") {
         let mut c = UdmabufCreate {
-            memfd: mfd as u32,
+            memfd: mfd.cast_unsigned(),
             flags: UDMABUF_FLAGS_CLOEXEC,
             offset: 0,
             size: size as u64,
         };
         // udmabuf returns the new descriptor as the ioctl result.
         // SAFETY: UdmabufCreate matches UDMABUF_CREATE.
-        if let Ok(r) = unsafe { ioctl(dev.0, UDMABUF_CREATE, &mut c) } {
+        if let Ok(r) = unsafe { ioctl(dev.0, UDMABUF_CREATE, &raw mut c) } {
             // SAFETY: new descriptor we own.
             return Ok((unsafe { OwnedFd::from_raw_fd(r) }, true));
         }

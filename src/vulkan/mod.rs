@@ -142,7 +142,7 @@ impl Instance {
     /// - On a 1.0 loader, `VK_KHR_get_physical_device_properties2`, which
     ///   opens the feature structs ([`FeatureQuery::Features2Khr`]).
     /// - `VK_KHR_portability_enumeration` with its create flag, without
-    ///   which a newer loader hides MoltenVK and other portability drivers.
+    ///   which a newer loader hides `MoltenVK` and other portability drivers.
     pub fn new<'a>(
         loader: Option<ApiVersion>,
         ceiling: ApiVersion,

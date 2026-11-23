@@ -7,6 +7,7 @@ use crate::runtime::backend::{KernelKey, OpSig};
 use crate::tiers::Tier;
 
 /// All tiers of the device that support `sig`, ascending.
+#[must_use]
 pub fn tiers(dev: &Device, sig: OpSig, batched: bool) -> Vec<Tier> {
     let name = sig.name(batched);
     dev.features()

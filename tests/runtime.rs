@@ -1,5 +1,14 @@
 //! Runtime behaviour: argument checks, support errors, buffer lifetime, reduce.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "test data is built with bit-level casts; shapes are named as in the math"
+)]
+
 mod common;
 
 use common::*;

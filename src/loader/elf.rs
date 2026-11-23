@@ -19,6 +19,8 @@ pub mod machine {
 pub const SHT_SYMTAB: u32 = 2;
 /// Section header type: note.
 pub const SHT_NOTE: u32 = 7;
+/// Section header type: no file data (`.bss`).
+pub const SHT_NOBITS: u32 = 8;
 /// Section header type: dynamic symbol table.
 pub const SHT_DYNSYM: u32 = 11;
 
@@ -61,15 +63,13 @@ pub struct Elf<'a> {
     pub sections: Vec<Section<'a>>,
 }
 
-/// `(sh_name, sh_type, sh_flags, sh_addr, data, sh_link, sh_info, sh_offset, sh_size, sh_entsize)`.
-type Shdr<'a> = (u32, u32, u64, u64, &'a [u8], u32, u32, u64, u64, u64);
-
 fn bad(msg: &str) -> Error {
     Error::BadBinary(msg.into())
 }
 
 fn rd<const N: usize>(b: &[u8], off: usize) -> Result<[u8; N]> {
-    b.get(off..off + N)
+    off.checked_add(N)
+        .and_then(|end| b.get(off..end))
         .and_then(|s| s.try_into().ok())
         .ok_or_else(|| bad("truncated"))
 }
@@ -95,9 +95,84 @@ fn cstr(b: &[u8], off: usize) -> Result<&str> {
     core::str::from_utf8(&s[..end]).map_err(|_| bad("non-UTF-8 name"))
 }
 
+/// Reads the fields whose offset or width follows the ELF class.
+#[derive(Clone, Copy)]
+struct Class<'a> {
+    b: &'a [u8],
+    is32: bool,
+}
+
+impl<'a> Class<'a> {
+    /// A word-size field: `u32` at `at + o32` in ELF32, `u64` at `at + o64` in ELF64.
+    fn word(self, at: usize, o32: usize, o64: usize) -> Result<u64> {
+        if self.is32 {
+            Ok(u64::from(u32_at(self.b, at + o32)?))
+        } else {
+            u64_at(self.b, at + o64)
+        }
+    }
+
+    /// A `u32` field at a class-dependent offset.
+    fn u32(self, at: usize, o32: usize, o64: usize) -> Result<u32> {
+        u32_at(self.b, at + if self.is32 { o32 } else { o64 })
+    }
+
+    /// A `u16` file header field at a class-dependent offset.
+    fn u16(self, o32: usize, o64: usize) -> Result<usize> {
+        Ok(usize::from(u16_at(
+            self.b,
+            if self.is32 { o32 } else { o64 },
+        )?))
+    }
+
+    /// Section header `i`, with its name still an offset into the section
+    /// name table.
+    fn section(self, shoff: usize, shentsize: usize, i: usize) -> Result<(u32, Section<'a>)> {
+        let h = i
+            .checked_mul(shentsize)
+            .and_then(|o| o.checked_add(shoff))
+            .ok_or_else(|| bad("overflow"))?;
+        if h.checked_add(shentsize)
+            .is_none_or(|end| end > self.b.len())
+        {
+            return Err(bad("section header out of range"));
+        }
+        let kind = u32_at(self.b, h + 4)?;
+        let offset = self.word(h, 16, 24)?;
+        let size = self.word(h, 20, 32)?;
+        let (off, len) = (usize_of(offset)?, usize_of(size)?);
+        let data = if kind == SHT_NOBITS {
+            &self.b[..0]
+        } else {
+            off.checked_add(len)
+                .and_then(|end| self.b.get(off..end))
+                .ok_or_else(|| bad("section out of range"))?
+        };
+        let section = Section {
+            name: "",
+            kind,
+            flags: self.word(h, 8, 8)?,
+            addr: self.word(h, 12, 16)?,
+            data,
+            link: self.u32(h, 24, 40)?,
+            info: self.u32(h, 28, 44)?,
+            offset,
+            size,
+            entsize: self.word(h, 36, 56)?,
+        };
+        Ok((u32_at(self.b, h)?, section))
+    }
+}
+
 impl<'a> Elf<'a> {
+    /// Parses the file header and the section table.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadBinary`] for anything but little-endian ELF32/ELF64, and
+    /// for headers, sections or names outside the file.
     pub fn parse(b: &'a [u8]) -> Result<Elf<'a>> {
-        if b.get(..4) != Some(b"\x7fELF") {
+        if b.get(..4) != Some(b"ELF") {
             return Err(bad("not ELF"));
         }
         let is32 = match (b.get(4), b.get(5)) {
@@ -105,113 +180,44 @@ impl<'a> Elf<'a> {
             (Some(2), Some(1)) => false,
             _ => return Err(bad("only little-endian ELF32/ELF64 is supported")),
         };
-        // Word-size dependent field reader: u32 in ELF32, u64 in ELF64.
-        let word = |o32: usize, o64: usize| -> Result<u64> {
-            if is32 {
-                Ok(u32_at(b, o32)? as u64)
-            } else {
-                u64_at(b, o64)
-            }
+        let class = Class { b, is32 };
+        let mut elf = Elf {
+            is32,
+            machine: u16_at(b, 18)?,
+            entry: class.word(0, 24, 24)?,
+            flags: class.u32(0, 36, 48)?,
+            sections: Vec::new(),
         };
-        let machine = u16_at(b, 18)?;
-        let entry = word(24, 24)?;
-        let flags = if is32 { u32_at(b, 36)? } else { u32_at(b, 48)? };
-        let shoff = usize_of(word(32, 40)?)?;
-        let (shentsize, shnum, shstrndx) = if is32 {
-            (
-                u16_at(b, 46)? as usize,
-                u16_at(b, 48)? as usize,
-                u16_at(b, 50)? as usize,
-            )
-        } else {
-            (
-                u16_at(b, 58)? as usize,
-                u16_at(b, 60)? as usize,
-                u16_at(b, 62)? as usize,
-            )
-        };
+        let shoff = usize_of(class.word(0, 32, 40)?)?;
+        let (shentsize, shnum, shstrndx) =
+            (class.u16(46, 58)?, class.u16(48, 60)?, class.u16(50, 62)?);
         if shnum == 0 {
-            return Ok(Elf {
-                is32,
-                machine,
-                entry,
-                flags,
-                sections: Vec::new(),
-            });
+            return Ok(elf);
         }
         if shentsize < if is32 { 40 } else { 64 } {
             return Err(bad("section header size"));
         }
-        let hdr = |i: usize| -> Result<Shdr<'a>> {
-            let h = shoff
-                .checked_add(i.checked_mul(shentsize).ok_or_else(|| bad("overflow"))?)
-                .ok_or_else(|| bad("overflow"))?;
-            // (offset in ELF32, offset in ELF64) per field.
-            let w = |o32: usize, o64: usize| -> Result<u64> {
-                if is32 {
-                    Ok(u32_at(b, h + o32)? as u64)
-                } else {
-                    u64_at(b, h + o64)
-                }
-            };
-            let kind = u32_at(b, h + 4)?;
-            let (off, size) = (usize_of(w(16, 24)?)?, usize_of(w(20, 32)?)?);
-            let (link, info) = if is32 {
-                (u32_at(b, h + 24)?, u32_at(b, h + 28)?)
-            } else {
-                (u32_at(b, h + 40)?, u32_at(b, h + 44)?)
-            };
-            // SHT_NOBITS (.bss) has no file data.
-            let data = if kind == 8 {
-                &b[..0]
-            } else {
-                b.get(off..off.checked_add(size).ok_or_else(|| bad("overflow"))?)
-                    .ok_or_else(|| bad("section out of range"))?
-            };
-            Ok((
-                u32_at(b, h)?,
-                kind,
-                w(8, 8)?,
-                w(12, 16)?,
-                data,
-                link,
-                info,
-                off as u64,
-                size as u64,
-                w(36, 56)?,
-            ))
-        };
-        let strtab = hdr(shstrndx)?.4;
-        let mut sections = Vec::with_capacity(shnum);
+        let names = class.section(shoff, shentsize, shstrndx)?.1.data;
+        elf.sections.reserve_exact(shnum);
         for i in 0..shnum {
-            let (name, kind, flags, addr, data, link, info, offset, size, entsize) = hdr(i)?;
-            sections.push(Section {
-                name: cstr(strtab, name as usize)?,
-                kind,
-                flags,
-                addr,
-                data,
-                link,
-                info,
-                offset,
-                size,
-                entsize,
-            });
+            let (name, mut section) = class.section(shoff, shentsize, i)?;
+            section.name = cstr(names, name as usize)?;
+            elf.sections.push(section);
         }
-        Ok(Elf {
-            is32,
-            machine,
-            entry,
-            flags,
-            sections,
-        })
+        Ok(elf)
     }
 
+    #[must_use]
     pub fn section(&self, name: &str) -> Option<&Section<'a>> {
         self.sections.iter().find(|s| s.name == name)
     }
 
     /// Symbols from `.symtab` and `.dynsym`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadBinary`] for a symbol table whose string table link or
+    /// names are out of range.
     pub fn symbols(&self) -> Result<Vec<Symbol<'a>>> {
         let mut out = Vec::new();
         for s in self
@@ -228,8 +234,8 @@ impl<'a> Elf<'a> {
                 for e in s.data.as_chunks::<16>().0 {
                     out.push(Symbol {
                         name: cstr(strs, u32_at(e, 0)? as usize)?,
-                        value: u32_at(e, 4)? as u64,
-                        size: u32_at(e, 8)? as u64,
+                        value: u64::from(u32_at(e, 4)?),
+                        size: u64::from(u32_at(e, 8)?),
                         info: e[12],
                         shndx: u16_at(e, 14)?,
                     });
@@ -249,11 +255,21 @@ impl<'a> Elf<'a> {
         Ok(out)
     }
 
+    /// The first symbol called `name`.
+    ///
+    /// # Errors
+    ///
+    /// As [`symbols`](Self::symbols).
     pub fn symbol(&self, name: &str) -> Result<Option<Symbol<'a>>> {
         Ok(self.symbols()?.into_iter().find(|s| s.name == name))
     }
 
     /// Notes as `(owner, type, desc)` from all `SHT_NOTE` sections (HSACO metadata lives here).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadBinary`] for a note whose name or descriptor runs past its
+    /// section, or whose owner is not UTF-8.
     pub fn notes(&self) -> Result<Vec<(&'a str, u32, &'a [u8])>> {
         let mut out = Vec::new();
         for s in self.sections.iter().filter(|s| s.kind == SHT_NOTE) {

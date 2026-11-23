@@ -268,7 +268,7 @@ pub const NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS: u32 = 1 << 4;
 pub const NVOS02_FLAGS_COHERENCY_CACHED: u32 = 1 << 12;
 pub const NVOS02_FLAGS_MAPPING_NO_MAP: u32 = 1 << 30;
 /// `NVOS33` flags for the BAR1 mapping of the GPFIFO/USERD area: mapping
-/// REFLECTED (16:15), MAP_FIXED (18), RESERVE_ON_UNMAP (19), caching 25:23 = 2.
+/// REFLECTED (16:15), `MAP_FIXED` (18), `RESERVE_ON_UNMAP` (19), caching 25:23 = 2.
 pub const NVOS33_FLAGS_FIFO_AREA: u32 = (2 << 15) | (1 << 18) | (1 << 19) | (2 << 23);
 /// `NVOS33_FLAGS_ACCESS_WRITE_ONLY` (usermode doorbell page).
 pub const NVOS33_FLAGS_ACCESS_WRITE_ONLY: u32 = 2;
@@ -496,10 +496,10 @@ pub const PCAS_ACTION_INVALIDATE_SCHEDULE: u32 = 9;
 pub const NVC7B5_OFFSET_IN_UPPER: u32 = 0x400;
 pub const NVC7B5_LINE_LENGTH_IN: u32 = 0x418;
 pub const NVC7B5_LAUNCH_DMA: u32 = 0x300;
-/// NON_PIPELINED transfer, FLUSH, pitch source and destination.
+/// `NON_PIPELINED` transfer, FLUSH, pitch source and destination.
 pub const LAUNCH_DMA_COPY: u32 = 2 | (1 << 2) | (1 << 7) | (1 << 8);
 
-/// Push-buffer header for `count` incrementing method data words (`SEC_OP` 1 = INC_METHOD).
+/// Push-buffer header for `count` incrementing method data words (`SEC_OP` 1 = `INC_METHOD`).
 pub const fn method(subc: u32, mthd: u32, count: u32) -> u32 {
     (1 << 29) | (count << 16) | (subc << 13) | (mthd >> 2)
 }
@@ -684,7 +684,7 @@ pub fn rm_alloc<P>(
     params: Option<&mut P>,
 ) -> Result<NvHandle> {
     let (ptr, size) = match params {
-        Some(p) => (p as *mut P as u64, size_of::<P>() as u32),
+        Some(p) => (std::ptr::from_mut::<P>(p) as u64, size_of::<P>() as u32),
         None => (0, 0),
     };
     let mut a = NVOS21_PARAMETERS {
@@ -713,7 +713,7 @@ pub fn rm_control<P>(
         hClient: client,
         hObject: object,
         cmd,
-        params: params as *mut P as u64,
+        params: std::ptr::from_mut::<P>(params) as u64,
         paramsSize: size_of::<P>() as u32,
         ..Default::default()
     };

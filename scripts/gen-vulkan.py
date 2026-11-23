@@ -217,6 +217,14 @@ def ext_order(name):
     return ({"KHR": 0, "EXT": 1}.get(vendor, 2), name)
 
 
+def grouped(pairs):
+    """(value, key) pairs -> [(value, [keys])], first-seen order: one match arm per value."""
+    out = {}
+    for value, key in pairs:
+        out.setdefault(value, []).append(key)
+    return list(out.items())
+
+
 def screaming(variant):
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", variant).upper() + "_FIELDS"
 
@@ -333,8 +341,8 @@ def generate(reg):
     w("    #[must_use]")
     w("    pub const fn version_struct_since(self) -> Option<ApiVersion> {")
     w("        match self {")
-    for chain, at in since.items():
-        w(f"            Self::{chain} => Some({version_tuple(at)}),")
+    for value, chains in grouped((f"Some({version_tuple(at)})", c) for c, at in since.items()):
+        w(f"            {' | '.join(f'Self::{c}' for c in chains)} => {value},")
     w("            _ => None,")
     w("        }")
     w("    }")
@@ -346,8 +354,10 @@ def generate(reg):
     w("    #[must_use]")
     w("    pub const fn absorbed_by(self) -> Option<(ApiVersion, Chain)> {")
     w("        match self {")
-    for variant, (at, by) in absorbed.items():
-        w(f"            Self::{variant} => Some(({version_tuple(at)}, Self::{by})),")
+    for value, chains in grouped(
+        (f"Some(({version_tuple(at)}, Self::{by}))", v) for v, (at, by) in absorbed.items()
+    ):
+        w(f"            {' | '.join(f'Self::{c}' for c in chains)} => {value},")
     w("            _ => None,")
     w("        }")
     w("    }")

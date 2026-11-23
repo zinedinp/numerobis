@@ -1,5 +1,10 @@
 //! Direct 2-D convolution (no im2col buffer).
 
+#![allow(
+    clippy::many_single_char_names,
+    reason = "NCHW / KCRS / NKPQ shapes are named as in the math"
+)]
+
 use super::{Choice, key, len_u32};
 use crate::elem::{F32, FloatElem, U8, as_bytes};
 use crate::ops::act::Act;
@@ -52,6 +57,7 @@ pub struct Conv2dShape {
 
 impl Conv2dShape {
     /// Stride 1, no padding, no dilation, one group.
+    #[must_use]
     pub fn new(n: usize, c: usize, h: usize, w: usize, k: usize, r: usize, s: usize) -> Self {
         Conv2dShape {
             n,
@@ -67,29 +73,34 @@ impl Conv2dShape {
             groups: 1,
         }
     }
+    #[must_use]
     pub fn stride(self, sh: usize, sw: usize) -> Self {
         Conv2dShape {
             stride: (sh, sw),
             ..self
         }
     }
+    #[must_use]
     pub fn pad(self, ph: usize, pw: usize) -> Self {
         Conv2dShape {
             pad: (ph, pw),
             ..self
         }
     }
+    #[must_use]
     pub fn dilation(self, dh: usize, dw: usize) -> Self {
         Conv2dShape {
             dilation: (dh, dw),
             ..self
         }
     }
+    #[must_use]
     pub fn groups(self, g: usize) -> Self {
         Conv2dShape { groups: g, ..self }
     }
 
     /// Output height and width.
+    #[must_use]
     pub fn out_hw(&self) -> Option<(usize, usize)> {
         let ext = |len: usize, pad: usize, k: usize, d: usize, st: usize| {
             let span = d.checked_mul(k.checked_sub(1)?)?.checked_add(1)?;
@@ -106,12 +117,15 @@ impl Conv2dShape {
         ))
     }
 
+    #[must_use]
     pub fn input_len(&self) -> usize {
         self.n * self.c * self.h * self.w
     }
+    #[must_use]
     pub fn weight_len(&self) -> usize {
         self.k * (self.c / self.groups.max(1)) * self.r * self.s
     }
+    #[must_use]
     pub fn output_len(&self) -> Option<usize> {
         let (p, q) = self.out_hw()?;
         Some(self.n * self.k * p * q)
@@ -125,6 +139,16 @@ impl Conv2dShape {
 ///
 /// The parameter block is uploaded once per call; inside a recorded
 /// [`CommandList`](crate::CommandList) it is recorded with the launch.
+///
+/// # Errors
+///
+/// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when the buffers don't match `shape`,
+/// `C` or `K` is not a multiple of the groups, the kernel is larger than the padded input, the
+/// stride is 0, the bias has not `K` elements, or `fused` has parameters.
+/// [`Error::Unsupported`](crate::Error::Unsupported) when the [`Choice`] finds no
+/// kernel for these formats (on an [`Exactness::Bit`](crate::Exactness::Bit) stream: none that is
+/// bit-exact); [`Error::InvalidArgument`](crate::Error::InvalidArgument) also for a buffer of
+/// another device or an approximate input on such a stream. Errors of the device pass through.
 #[allow(clippy::too_many_arguments)]
 pub fn conv2d<X: FloatElem, W: FloatElem, Y: FloatElem>(
     s: &mut Stream,

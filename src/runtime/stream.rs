@@ -52,11 +52,22 @@ type Finish<T> = Box<dyn FnOnce(&dyn Backend) -> Result<T> + Send>;
 
 impl<T> Pending<T> {
     /// Waits with the stream's default timeout.
+    ///
+    /// # Errors
+    ///
+    /// As [`wait_timeout`](Self::wait_timeout).
     pub fn wait(self) -> Result<T> {
         let t = self.timeout;
         self.wait_timeout(t)
     }
 
+    /// Waits at most `timeout` for the work, then runs its host-side step.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Timeout`](crate::Error::Timeout) when the work is not done in time (it may still
+    /// finish), [`Error::DeviceLost`](crate::Error::DeviceLost) when the device died; errors of the
+    /// host-side step (a download's copy out) pass through.
     pub fn wait_timeout(self, timeout: Duration) -> Result<T> {
         if let Some(f) = self.fence {
             self.backend.wait(f, timeout)?;
@@ -65,6 +76,10 @@ impl<T> Pending<T> {
     }
 
     /// Waits and also returns the device time of the work.
+    ///
+    /// # Errors
+    ///
+    /// As [`wait`](Self::wait).
     pub fn wait_elapsed(self) -> Result<(T, Option<Duration>)> {
         let el = match self.fence {
             Some(f) => {
@@ -77,12 +92,17 @@ impl<T> Pending<T> {
     }
 
     /// Device time, once the work has finished; `None` before or if the backend has no timestamps.
+    #[must_use]
     pub fn elapsed(&self) -> Option<Duration> {
         self.backend.elapsed(self.fence?)
     }
 
     /// Signals `timeline` at `value` once this work is done, without blocking:
     /// the hand-off to a Vulkan timeline semaphore (see [`crate::sync`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`](crate::Error::Os) when the timeline cannot be signalled.
     #[cfg(target_os = "linux")]
     pub fn signal_timeline(&self, timeline: &crate::sync::Timeline, value: u64) -> Result<()> {
         crate::runtime::sync::signal_after(self.backend.clone(), self.fence, timeline, value)
@@ -91,11 +111,15 @@ impl<T> Pending<T> {
     /// A kernel `sync_file` for this work, on backends whose driver has
     /// dma-fences; others report `Unsupported` (use
     /// [`signal_timeline`](Self::signal_timeline), which works everywhere).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`](crate::Error::Unsupported) on backends without dma-fences,
+    /// [`Error::Os`](crate::Error::Os) when the kernel refuses the export.
     #[cfg(target_os = "linux")]
     pub fn sync_file(&self) -> Result<crate::sync::SyncFile> {
-        match self.fence {
-            Some(f) => self
-                .backend
+        if let Some(f) = self.fence {
+            self.backend
                 .export_sync_file(f)
                 .map(crate::sync::SyncFile::from_fd)
                 .ok_or_else(|| {
@@ -103,13 +127,12 @@ impl<T> Pending<T> {
                         "{} has no kernel dma-fences; use Pending::signal_timeline",
                         self.backend.features().name
                     ))
-                }),
-            None => {
-                // Nothing in flight: an already-signalled sync_file.
-                let tl = crate::sync::Timeline::new()?;
-                tl.signal(1)?;
-                tl.sync_file(1)
-            }
+                })
+        } else {
+            // Nothing in flight: an already-signalled sync_file.
+            let tl = crate::sync::Timeline::new()?;
+            tl.signal(1)?;
+            tl.sync_file(1)
         }
     }
 }
@@ -157,6 +180,7 @@ impl Stream {
         }
     }
 
+    #[must_use]
     pub fn device(&self) -> &Device {
         &self.dev
     }
@@ -165,6 +189,7 @@ impl Stream {
         self.timeout = timeout;
     }
 
+    #[must_use]
     pub fn exactness(&self) -> Exactness {
         self.exactness
     }
@@ -193,6 +218,14 @@ impl Stream {
     }
 
     /// Resolves host-side dependencies before the next submission.
+    #[cfg_attr(
+        not(target_os = "linux"),
+        allow(
+            clippy::unused_self,
+            clippy::unnecessary_wraps,
+            reason = "sync-file dependencies exist on Linux only"
+        )
+    )]
     fn before_submit(&mut self) -> Result<()> {
         #[cfg(target_os = "linux")]
         while let Some(d) = self.deps.first() {
@@ -218,6 +251,11 @@ impl Stream {
     }
 
     /// Waits for all submitted work.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Timeout`](crate::Error::Timeout) when the work is not done within the stream's
+    /// timeout. Errors of the device pass through.
     pub fn synchronize(&mut self) -> Result<()> {
         let b = self.backend().clone();
         while let Some(f) = self.inflight.first() {
@@ -228,6 +266,12 @@ impl Stream {
     }
 
     /// Allocates `len` elements. The contents are unspecified.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when `len` is not a whole number
+    /// of the format's blocks, [`Error::OutOfMemory`](crate::Error::OutOfMemory) when the device
+    /// has no room.
     pub fn alloc<E: Elem>(&mut self, len: usize) -> Result<DeviceBuffer<E>> {
         let bytes = E::FORMAT.storage_bytes(len).ok_or_else(|| {
             invalid(format!(
@@ -243,6 +287,13 @@ impl Stream {
 
     /// Imports a dma-buf (from Vulkan, KMS, V4L2, another accelerator) as a
     /// buffer of `len` elements, without a copy. The contents count as exact.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when `len` is not a whole number
+    /// of blocks or the dma-buf is smaller, [`Error::Unsupported`](crate::Error::Unsupported) when
+    /// the backend cannot import dma-bufs, [`Error::Os`](crate::Error::Os) when its size cannot be
+    /// read.
     #[cfg(target_os = "linux")]
     pub fn import_dmabuf<E: Elem>(
         &mut self,
@@ -269,12 +320,20 @@ impl Stream {
     }
 
     /// Host -> device for byte-aligned formats.
+    ///
+    /// # Errors
+    ///
+    /// As [`upload_packed`](Self::upload_packed).
     pub fn upload<E: HostRepr>(&mut self, data: &[E::Host]) -> Result<DeviceBuffer<E>> {
         self.upload_packed(data.len(), as_bytes(data))
     }
 
     /// Host -> device from bytes already in device layout (packed sub-byte
     /// formats, block formats; produce them with the miraculix codecs).
+    ///
+    /// # Errors
+    ///
+    /// As [`alloc`](Self::alloc) and [`write_packed`](Self::write_packed).
     pub fn upload_packed<E: Elem>(&mut self, len: usize, bytes: &[u8]) -> Result<DeviceBuffer<E>> {
         let buf = self.alloc::<E>(len)?;
         self.write_packed(&buf, bytes)?;
@@ -283,11 +342,21 @@ impl Stream {
 
     /// Overwrites an existing buffer from the host (per-frame inputs of a
     /// [`CommandList`]). The buffer counts as exact afterwards.
+    ///
+    /// # Errors
+    ///
+    /// As [`write_packed`](Self::write_packed).
     pub fn write<E: HostRepr>(&mut self, buf: &DeviceBuffer<E>, data: &[E::Host]) -> Result<()> {
         self.write_packed(buf, as_bytes(data))
     }
 
     /// [`write`](Self::write) from bytes in device layout.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when `buf` belongs to another
+    /// device or `bytes` is not its size; errors of the copy or of a
+    /// `wait_sync_file` dependency (Linux) pass through.
     pub fn write_packed<E: Elem>(&mut self, buf: &DeviceBuffer<E>, bytes: &[u8]) -> Result<()> {
         self.check_same_device(&buf.raw)?;
         if bytes.len() != buf.bytes() {
@@ -307,6 +376,11 @@ impl Stream {
     }
 
     /// Device -> host.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when `buf` belongs to another
+    /// device or the stream is recording; errors of the copy pass through.
     pub fn download<E: Elem>(&mut self, buf: &DeviceBuffer<E>) -> Result<Pending<HostCopy<E>>> {
         self.check_same_device(&buf.raw)?;
         if self.recorder.is_some() {
@@ -387,6 +461,11 @@ impl Stream {
 
     /// Starts recording: ops called on this stream are translated (kernel
     /// lookup, lowering, argument checks) but not run. Uploads still run.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when the stream is already
+    /// recording.
     pub fn begin_recording(&mut self) -> Result<()> {
         if self.recorder.is_some() {
             return Err(invalid("already recording"));
@@ -396,6 +475,10 @@ impl Stream {
     }
 
     /// Ends recording and returns the command list.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when the stream is not recording.
     pub fn end_recording(&mut self) -> Result<CommandList> {
         let r = self
             .recorder
@@ -405,6 +488,11 @@ impl Stream {
     }
 
     /// `begin_recording`, `f`, `end_recording`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when the stream is already
+    /// recording; errors of `f` pass through.
     pub fn record(&mut self, f: impl FnOnce(&mut Stream) -> Result<()>) -> Result<CommandList> {
         self.begin_recording()?;
         let r = f(self);
@@ -415,6 +503,13 @@ impl Stream {
     /// Runs a recorded command list, with buffers swapped per
     /// [`Bind`](crate::Bind) (same element type and length): translate once,
     /// then per frame only exchange buffers.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when `cl` was recorded on another
+    /// device, the stream is recording, or `binds` don't fit `cl` (another device, a buffer bound
+    /// twice, approximate inputs on an [`Exactness::Bit`](crate::Exactness::Bit) stream); errors of
+    /// the submission pass through.
     pub fn replay(&mut self, cl: &CommandList, binds: &[crate::Bind<'_>]) -> Result<Pending<()>> {
         if !Arc::ptr_eq(&cl.dev.inner.backend, self.backend()) {
             return Err(invalid("command list was recorded on a different device"));

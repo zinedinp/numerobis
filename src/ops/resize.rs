@@ -10,6 +10,15 @@ use crate::runtime::{DeviceBuffer, Pending, Stream};
 /// an NCHW tensor, or the channels of a planar image) to `ho x wo`, half-pixel
 /// centres (`align_corners = false`). Nearest is exact on every tier;
 /// bilinear is exact on [`Tier::Emulated`](crate::Tier::Emulated).
+///
+/// # Errors
+///
+/// [`Error::InvalidArgument`](crate::Error::InvalidArgument) for an empty plane, buffer lengths
+/// other than `planes`·`h`·`w` and `planes`·`ho`·`wo`, or sizes above `u32::MAX`.
+/// [`Error::Unsupported`](crate::Error::Unsupported) when the [`Choice`] finds no
+/// kernel for these formats (on an [`Exactness::Bit`](crate::Exactness::Bit) stream: none that is
+/// bit-exact); [`Error::InvalidArgument`](crate::Error::InvalidArgument) also for a buffer of
+/// another device or an approximate input on such a stream. Errors of the device pass through.
 #[allow(clippy::too_many_arguments)]
 pub fn resize<S: FloatElem, D: FloatElem>(
     s: &mut Stream,

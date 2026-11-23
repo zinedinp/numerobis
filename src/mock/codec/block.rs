@@ -1,4 +1,4 @@
-//! MX, NVFP4, BFP_B and GGUF in the device layout of [`crate::elem`]
+//! MX, NVFP4, `BFP_B` and GGUF in the device layout of [`crate::elem`]
 //! (element data, then scales; NVFP4 then the tensor scale).
 
 use miraculix::formats::bfp::{bfp_decode_rows, bfp_encode_rows};
@@ -9,6 +9,7 @@ use miraculix::formats::mx::{
 
 use crate::elem::Format;
 
+#[must_use]
 pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<f32>> {
     let mut out = vec![0.0f32; len];
     let off = fmt.scale_offset(len);
@@ -28,6 +29,7 @@ pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<f32>> {
 }
 
 /// `None` for GGUF (decode only).
+#[must_use]
 pub fn encode(fmt: Format, src: &[f32]) -> Option<Vec<u8>> {
     let len = src.len();
     let mut out = vec![0u8; fmt.storage_bytes(len)?];

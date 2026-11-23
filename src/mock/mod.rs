@@ -4,6 +4,16 @@
 //!
 //! [`codec`] is split by format kind, `kernels` by op kind.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "the host oracle mirrors the C kernels: bit-level codec casts and \
+              index math named as in the kernels"
+)]
+
 pub mod codec;
 mod kernels;
 
@@ -36,6 +46,13 @@ impl State {
     }
 
     /// Shared mappings -> `mem`.
+    #[cfg_attr(
+        not(target_os = "linux"),
+        allow(
+            clippy::unused_self,
+            reason = "shared dma-buf mappings exist on Linux only"
+        )
+    )]
     fn pull(&mut self) {
         #[cfg(target_os = "linux")]
         for (id, m) in &self.shared {
@@ -47,6 +64,13 @@ impl State {
     }
 
     /// `mem` -> shared mappings.
+    #[cfg_attr(
+        not(target_os = "linux"),
+        allow(
+            clippy::unused_self,
+            reason = "shared dma-buf mappings exist on Linux only"
+        )
+    )]
     fn push(&mut self) {
         #[cfg(target_os = "linux")]
         for (id, m) in &self.shared {
@@ -67,12 +91,14 @@ pub struct MockBackend {
 
 impl MockBackend {
     /// A device with only [`Tier::Emulated`].
+    #[must_use]
     pub fn new(class: DeviceClass) -> Self {
         Self::with_tiers(class, vec![Tier::Emulated], vec![Tier::Emulated])
     }
 
     /// A device that reports `tiers` but has kernels only for `kernel_tiers`
     /// (to test `auto_up` fallback and placement).
+    #[must_use]
     pub fn with_tiers(class: DeviceClass, tiers: Vec<Tier>, kernel_tiers: Vec<Tier>) -> Self {
         MockBackend {
             features: FeatureSet {
@@ -88,11 +114,14 @@ impl MockBackend {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
 /// Is `sig` a stage-1 op of the Emulated tier? Shared with test backends.
+#[must_use]
 pub fn supported(sig: OpSig) -> bool {
     kernels::supported(sig)
 }

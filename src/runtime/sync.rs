@@ -32,20 +32,31 @@ use crate::runtime::os::{Fd, errno, iowr};
 pub struct SyncFile(OwnedFd);
 
 impl SyncFile {
-    /// Takes ownership of a sync_file descriptor (e.g. from `vkGetSemaphoreFdKHR` with `SYNC_FD`).
+    /// Takes ownership of a `sync_file` descriptor (e.g. from `vkGetSemaphoreFdKHR` with `SYNC_FD`).
+    #[must_use]
     pub fn from_fd(fd: OwnedFd) -> SyncFile {
         SyncFile(fd)
     }
+    #[must_use]
     pub fn into_fd(self) -> OwnedFd {
         self.0
     }
 
     /// Non-blocking check.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the descriptor cannot be polled.
     pub fn is_signaled(&self) -> Result<bool> {
         poll_in(self.0.as_raw_fd(), Duration::ZERO)
     }
 
     /// Blocks until signalled.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Timeout`] when it has not signalled in time,
+    /// [`Error::Os`] when the descriptor cannot be polled.
     pub fn wait(&self, timeout: Duration) -> Result<()> {
         if poll_in(self.0.as_raw_fd(), timeout)? {
             Ok(())
@@ -65,15 +76,16 @@ fn poll_in(fd: RawFd, timeout: Duration) -> Result<bool> {
     let deadline = Instant::now() + timeout;
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
-        let ms = left.as_millis().min(i32::MAX as u128) as i32
-            + i32::from(!left.subsec_nanos().is_multiple_of(1_000_000));
+        // Rounded up, so a short wait never becomes a busy poll(0).
+        let ceil = left.as_millis() + u128::from(!left.subsec_nanos().is_multiple_of(1_000_000));
+        let ms = i32::try_from(ceil).unwrap_or(i32::MAX);
         let mut p = libc::pollfd {
             fd,
             events: libc::POLLIN,
             revents: 0,
         };
         // SAFETY: one valid pollfd.
-        let r = unsafe { libc::poll(&mut p, 1, ms) };
+        let r = unsafe { libc::poll(&raw mut p, 1, ms) };
         if r > 0 {
             return Ok(
                 p.revents & libc::POLLIN != 0 || p.revents & (libc::POLLERR | libc::POLLHUP) == 0
@@ -187,7 +199,7 @@ fn drm_node() -> Result<Arc<Fd>> {
                 value: 0,
             };
             // SAFETY: GetCap matches DRM_IOCTL_GET_CAP.
-            if unsafe { fd.ioctl(IOCTL_GET_CAP, &mut cap) }.is_ok() && cap.value != 0 {
+            if unsafe { fd.ioctl(IOCTL_GET_CAP, &raw mut cap) }.is_ok() && cap.value != 0 {
                 return Ok(Arc::new(fd));
             }
         }
@@ -204,9 +216,10 @@ fn monotonic_ns_after(d: Duration) -> i64 {
         tv_nsec: 0,
     };
     // SAFETY: valid out pointer.
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-    let now = ts.tv_sec as i128 * 1_000_000_000 + ts.tv_nsec as i128;
-    (now + d.as_nanos() as i128).min(i64::MAX as i128) as i64
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &raw mut ts) };
+    let now = i128::from(ts.tv_sec) * 1_000_000_000 + i128::from(ts.tv_nsec);
+    let after = now.saturating_add(i128::try_from(d.as_nanos()).unwrap_or(i128::MAX));
+    i64::try_from(after).unwrap_or(i64::MAX)
 }
 
 /// A DRM timeline syncobj: a 64-bit counter that only grows, the kernel
@@ -228,7 +241,7 @@ impl Drop for TimelineInner {
             pad: 0,
         };
         // SAFETY: we own the handle.
-        let _ = unsafe { self.node.ioctl(IOCTL_SYNCOBJ_DESTROY, &mut d) };
+        let _ = unsafe { self.node.ioctl(IOCTL_SYNCOBJ_DESTROY, &raw mut d) };
     }
 }
 
@@ -245,11 +258,16 @@ impl core::fmt::Debug for Timeline {
 
 impl Timeline {
     /// A new timeline at 0.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`] without a DRM render node that has
+    /// timeline syncobjs, [`Error::Os`] when the kernel refuses the syncobj.
     pub fn new() -> Result<Timeline> {
         let node = drm_node()?;
         let mut c = SyncobjCreate::default();
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_CREATE.
-        unsafe { node.ioctl(IOCTL_SYNCOBJ_CREATE, &mut c) }?;
+        unsafe { node.ioctl(IOCTL_SYNCOBJ_CREATE, &raw mut c) }?;
         Ok(Timeline {
             inner: Arc::new(TimelineInner {
                 node,
@@ -260,6 +278,11 @@ impl Timeline {
 
     /// Imports a syncobj fd (from `vkGetSemaphoreFdKHR` with `OPAQUE_FD` on a
     /// syncobj-based driver, or [`export_fd`](Self::export_fd) of another process).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`] without a DRM render node that has
+    /// timeline syncobjs, [`Error::Os`] when `fd` is not a syncobj.
     pub fn import_fd(fd: BorrowedFd<'_>) -> Result<Timeline> {
         let node = drm_node()?;
         let mut h = SyncobjHandle {
@@ -267,7 +290,7 @@ impl Timeline {
             ..Default::default()
         };
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE.
-        unsafe { node.ioctl(IOCTL_SYNCOBJ_FD_TO_HANDLE, &mut h) }?;
+        unsafe { node.ioctl(IOCTL_SYNCOBJ_FD_TO_HANDLE, &raw mut h) }?;
         Ok(Timeline {
             inner: Arc::new(TimelineInner {
                 node,
@@ -277,6 +300,10 @@ impl Timeline {
     }
 
     /// A syncobj fd for `vkImportSemaphoreFdKHR` (`OPAQUE_FD`, timeline semaphore).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the kernel refuses the export.
     pub fn export_fd(&self) -> Result<OwnedFd> {
         let mut h = SyncobjHandle {
             handle: self.inner.handle,
@@ -284,51 +311,76 @@ impl Timeline {
             ..Default::default()
         };
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD.
-        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_HANDLE_TO_FD, &mut h) }?;
+        unsafe {
+            self.inner
+                .node
+                .ioctl(IOCTL_SYNCOBJ_HANDLE_TO_FD, &raw mut h)
+        }?;
         // SAFETY: the kernel returned a new descriptor we own.
         Ok(unsafe { OwnedFd::from_raw_fd(h.fd) })
     }
 
     /// Signals `value` from the host (must be above the current value).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the kernel refuses the signal.
     pub fn signal(&self, value: u64) -> Result<()> {
         let (h, mut p) = (self.inner.handle, value);
         let mut a = SyncobjTimelineArray {
-            handles: &h as *const u32 as u64,
-            points: &mut p as *mut u64 as u64,
+            handles: &raw const h as u64,
+            points: &raw mut p as u64,
             count_handles: 1,
             flags: 0,
         };
         // SAFETY: arrays of one, alive for the call.
-        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_TIMELINE_SIGNAL, &mut a) }
+        unsafe {
+            self.inner
+                .node
+                .ioctl(IOCTL_SYNCOBJ_TIMELINE_SIGNAL, &raw mut a)
+        }
     }
 
     /// Highest signalled value.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the query fails.
     pub fn value(&self) -> Result<u64> {
         let (h, mut p) = (self.inner.handle, 0u64);
         let mut a = SyncobjTimelineArray {
-            handles: &h as *const u32 as u64,
-            points: &mut p as *mut u64 as u64,
+            handles: &raw const h as u64,
+            points: &raw mut p as u64,
             count_handles: 1,
             flags: 0,
         };
         // SAFETY: arrays of one, alive for the call.
-        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_QUERY, &mut a) }?;
+        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_QUERY, &raw mut a) }?;
         Ok(p)
     }
 
     /// Blocks until `value` is signalled (also when its signal is submitted later).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Timeout`] when `value` is not signalled in time,
+    /// [`Error::Os`] for other kernel errors.
     pub fn wait(&self, value: u64, timeout: Duration) -> Result<()> {
         let (h, p) = (self.inner.handle, value);
         let mut w = SyncobjTimelineWait {
-            handles: &h as *const u32 as u64,
-            points: &p as *const u64 as u64,
+            handles: &raw const h as u64,
+            points: &raw const p as u64,
             timeout_nsec: monotonic_ns_after(timeout),
             count_handles: 1,
             flags: WAIT_ALL | WAIT_FOR_SUBMIT,
             ..Default::default()
         };
         // SAFETY: arrays of one, alive for the call.
-        match unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_TIMELINE_WAIT, &mut w) } {
+        match unsafe {
+            self.inner
+                .node
+                .ioctl(IOCTL_SYNCOBJ_TIMELINE_WAIT, &raw mut w)
+        } {
             Err(Error::Os(libc::ETIME)) => Err(Error::Timeout(timeout)),
             r => r,
         }
@@ -337,6 +389,11 @@ impl Timeline {
     /// The fence of point `value` as a `sync_file` (for `SYNC_FD` consumers).
     /// The point must already have a fence: signalled, or submitted by a
     /// driver; otherwise the kernel reports `ENOENT`/`EINVAL`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when point `value` has no fence yet (`ENOENT`/`EINVAL`) or
+    /// the export fails.
     pub fn sync_file(&self, value: u64) -> Result<SyncFile> {
         let tmp = Binary::new(&self.inner.node)?;
         let mut t = SyncobjTransfer {
@@ -346,7 +403,7 @@ impl Timeline {
             ..Default::default()
         };
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_TRANSFER.
-        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_TRANSFER, &mut t) }?;
+        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_TRANSFER, &raw mut t) }?;
         let mut h = SyncobjHandle {
             handle: tmp.0,
             flags: EXPORT_SYNC_FILE,
@@ -354,12 +411,20 @@ impl Timeline {
             ..Default::default()
         };
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD.
-        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_HANDLE_TO_FD, &mut h) }?;
+        unsafe {
+            self.inner
+                .node
+                .ioctl(IOCTL_SYNCOBJ_HANDLE_TO_FD, &raw mut h)
+        }?;
         // SAFETY: new descriptor we own.
         Ok(SyncFile(unsafe { OwnedFd::from_raw_fd(h.fd) }))
     }
 
     /// Makes point `value` signal when `sf` does (Vulkan `SYNC_FD` → timeline).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the kernel refuses the import.
     pub fn import_sync_file(&self, value: u64, sf: &SyncFile) -> Result<()> {
         let tmp = Binary::new(&self.inner.node)?;
         let mut h = SyncobjHandle {
@@ -369,7 +434,11 @@ impl Timeline {
             ..Default::default()
         };
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE.
-        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_FD_TO_HANDLE, &mut h) }?;
+        unsafe {
+            self.inner
+                .node
+                .ioctl(IOCTL_SYNCOBJ_FD_TO_HANDLE, &raw mut h)
+        }?;
         let mut t = SyncobjTransfer {
             src_handle: tmp.0,
             dst_handle: self.inner.handle,
@@ -377,7 +446,7 @@ impl Timeline {
             ..Default::default()
         };
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_TRANSFER.
-        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_TRANSFER, &mut t) }
+        unsafe { self.inner.node.ioctl(IOCTL_SYNCOBJ_TRANSFER, &raw mut t) }
     }
 }
 
@@ -388,7 +457,7 @@ impl<'a> Binary<'a> {
     fn new(node: &'a Fd) -> Result<Binary<'a>> {
         let mut c = SyncobjCreate::default();
         // SAFETY: matches DRM_IOCTL_SYNCOBJ_CREATE.
-        unsafe { node.ioctl(IOCTL_SYNCOBJ_CREATE, &mut c) }?;
+        unsafe { node.ioctl(IOCTL_SYNCOBJ_CREATE, &raw mut c) }?;
         Ok(Binary(c.handle, node))
     }
 }
@@ -400,7 +469,7 @@ impl Drop for Binary<'_> {
             pad: 0,
         };
         // SAFETY: we own the handle.
-        let _ = unsafe { self.1.ioctl(IOCTL_SYNCOBJ_DESTROY, &mut d) };
+        let _ = unsafe { self.1.ioctl(IOCTL_SYNCOBJ_DESTROY, &raw mut d) };
     }
 }
 
@@ -452,7 +521,7 @@ pub(crate) fn signal_after(
         Some(fence) if backend.wait(fence, Duration::ZERO).is_ok() => tl.signal(value),
         Some(fence) => bridge()
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .send(Job {
                 backend,
                 fence,

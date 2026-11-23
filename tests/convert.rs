@@ -1,4 +1,13 @@
-//! `ops::convert` against the miraculix MiniFloat codec, bit-exact.
+//! `ops::convert` against the miraculix `MiniFloat` codec, bit-exact.
+
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "test data is built with bit-level casts; shapes are named as in the math"
+)]
 
 mod common;
 
@@ -13,7 +22,7 @@ macro_rules! fp8_case {
         let codes: Vec<u8> = (0..=255).collect();
         let b = s.upload::<$t>(&codes).unwrap();
         for (c, g) in codes.iter().zip(float_to_host(&mut s, &b)) {
-            assert!(same(g, $f.decode(*c as u32)), "{:?} decode {c:#x}", $f);
+            assert!(same(g, $f.decode(u32::from(*c))), "{:?} decode {c:#x}", $f);
         }
         let x = edge_values(&mut Rng(7));
         let xb = s.upload::<F32>(&x).unwrap();
@@ -24,7 +33,12 @@ macro_rules! fp8_case {
                 .wait()
                 .unwrap();
             for (v, g) in x.iter().zip(download(&mut s, &y)) {
-                assert_eq!(g as u32, $f.encode(*v, ov), "{:?} encode {v} {ov:?}", $f);
+                assert_eq!(
+                    u32::from(g),
+                    $f.encode(*v, ov),
+                    "{:?} encode {v} {ov:?}",
+                    $f
+                );
             }
         }
     }};
@@ -90,7 +104,10 @@ fn packed_fp4_fp6() {
         assert_eq!(b.len(), 32);
         for (i, v) in x.iter().enumerate() {
             let code = (b[i / 2] >> (4 * (i % 2))) & 0xF;
-            assert_eq!(code as u32, MiniFloat::E2M1.encode(*v, Overflow::Saturate));
+            assert_eq!(
+                u32::from(code),
+                MiniFloat::E2M1.encode(*v, Overflow::Saturate)
+            );
         }
         let mut y6 = s.alloc::<E3M2>(64).unwrap();
         ops::convert(&mut s, Choice::Up, &xb, &mut y6, Overflow::Saturate)

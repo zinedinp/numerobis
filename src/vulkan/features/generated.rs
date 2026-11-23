@@ -221,8 +221,7 @@ impl Chain {
     #[must_use]
     pub const fn version_struct_since(self) -> Option<ApiVersion> {
         match self {
-            Self::Vulkan11 => Some(ApiVersion::V1_2),
-            Self::Vulkan12 => Some(ApiVersion::V1_2),
+            Self::Vulkan11 | Self::Vulkan12 => Some(ApiVersion::V1_2),
             Self::Vulkan13 => Some(ApiVersion::V1_3),
             Self::Vulkan14 => Some(ApiVersion::V1_4),
             _ => None,
@@ -236,24 +235,24 @@ impl Chain {
     #[must_use]
     pub const fn absorbed_by(self) -> Option<(ApiVersion, Chain)> {
         match self {
-            Self::Storage16Bit => Some((ApiVersion::V1_2, Self::Vulkan11)),
-            Self::Multiview => Some((ApiVersion::V1_2, Self::Vulkan11)),
-            Self::VariablePointers => Some((ApiVersion::V1_2, Self::Vulkan11)),
-            Self::ProtectedMemory => Some((ApiVersion::V1_2, Self::Vulkan11)),
-            Self::SamplerYcbcrConversion => Some((ApiVersion::V1_2, Self::Vulkan11)),
-            Self::ShaderDrawParameters => Some((ApiVersion::V1_2, Self::Vulkan11)),
-            Self::Storage8Bit => Some((ApiVersion::V1_2, Self::Vulkan12)),
-            Self::Float16Int8 => Some((ApiVersion::V1_2, Self::Vulkan12)),
-            Self::BufferDeviceAddress => Some((ApiVersion::V1_2, Self::Vulkan12)),
-            Self::DescriptorIndexing => Some((ApiVersion::V1_2, Self::Vulkan12)),
-            Self::ScalarBlockLayout => Some((ApiVersion::V1_2, Self::Vulkan12)),
-            Self::TimelineSemaphore => Some((ApiVersion::V1_2, Self::Vulkan12)),
-            Self::HostQueryReset => Some((ApiVersion::V1_2, Self::Vulkan12)),
-            Self::Synchronization2 => Some((ApiVersion::V1_3, Self::Vulkan13)),
-            Self::SubgroupSizeControl => Some((ApiVersion::V1_3, Self::Vulkan13)),
-            Self::DemoteToHelperInvocation => Some((ApiVersion::V1_3, Self::Vulkan13)),
-            Self::IntegerDotProduct => Some((ApiVersion::V1_3, Self::Vulkan13)),
-            Self::DynamicRendering => Some((ApiVersion::V1_3, Self::Vulkan13)),
+            Self::Storage16Bit
+            | Self::Multiview
+            | Self::VariablePointers
+            | Self::ProtectedMemory
+            | Self::SamplerYcbcrConversion
+            | Self::ShaderDrawParameters => Some((ApiVersion::V1_2, Self::Vulkan11)),
+            Self::Storage8Bit
+            | Self::Float16Int8
+            | Self::BufferDeviceAddress
+            | Self::DescriptorIndexing
+            | Self::ScalarBlockLayout
+            | Self::TimelineSemaphore
+            | Self::HostQueryReset => Some((ApiVersion::V1_2, Self::Vulkan12)),
+            Self::Synchronization2
+            | Self::SubgroupSizeControl
+            | Self::DemoteToHelperInvocation
+            | Self::IntegerDotProduct
+            | Self::DynamicRendering => Some((ApiVersion::V1_3, Self::Vulkan13)),
             Self::IndexTypeUint8 => Some((ApiVersion::V1_4, Self::Vulkan14)),
             _ => None,
         }

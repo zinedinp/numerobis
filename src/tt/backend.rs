@@ -5,7 +5,7 @@
 //! - buffers live in DRAM channel 0; host uploads/downloads go through a TLB
 //!   window;
 //! - one launch at a time: the core's runtime pulls every argument buffer
-//!   into its L1 over the NoC, runs the kernel over all work items, and
+//!   into its L1 over the `NoC`, runs the kernel over all work items, and
 //!   writes the buffers back, so a launch's buffers must fit the L1 staging
 //!   area (~1.4 MiB);
 //! - one Tensix core, scalar soft-float. Spreading work items over the 140
@@ -48,16 +48,16 @@ const MB_DONE: u64 = 4;
 const MB_STATUS: u64 = 8;
 const MB_KERNEL: u64 = 12;
 
-/// DRAM channel 0 endpoint (NoC 0) and the range handed out.
+/// DRAM channel 0 endpoint (`NoC` 0) and the range handed out.
 const DRAM_XY: (u16, u16) = (0, 0);
 const DRAM_BASE: u64 = 64 << 20;
 /// Channel size the firmware exposes (4 GiB minus 16 MiB reserved at the top).
 const DRAM_END: u64 = 4_278_190_080;
 const ALIGN: u64 = 64;
 
-/// Tensix tile used by default (NoC 0 coordinates). Never probe tiles by
-/// reading them: a NoC read to a harvested or non-Tensix tile can hang the
-/// Blackhole NoC (and with it the ARC), which only a reset clears.
+/// Tensix tile used by default (`NoC` 0 coordinates). Never probe tiles by
+/// reading them: a `NoC` read to a harvested or non-Tensix tile can hang the
+/// Blackhole `NoC` (and with it the ARC), which only a reset clears.
 /// `NUMEROBIS_TT_CORE=x,y` picks another tile.
 const DEFAULT_CORE: (u16, u16) = (1, 2);
 
@@ -122,19 +122,20 @@ pub struct TtBackend {
 }
 
 fn xy(x: u16, y: u16) -> u32 {
-    ((y as u32) << 6) | x as u32
+    (u32::from(y) << 6) | u32::from(x)
 }
 
 /// One backend per card per process (the core is a shared resource).
 static OPEN: Mutex<Vec<(String, Weak<TtBackend>)>> = Mutex::new(Vec::new());
 
 /// Tries every `/dev/tenstorrent/N`; errors are kept for diagnostics.
+#[must_use]
 pub fn probe() -> Vec<Result<Device>> {
     let Ok(dir) = std::fs::read_dir("/dev/tenstorrent") else {
         return Vec::new();
     };
     let mut paths: Vec<String> = dir
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.path())
         .filter(|p| {
             p.file_name()
@@ -147,7 +148,9 @@ pub fn probe() -> Vec<Result<Device>> {
     paths
         .into_iter()
         .map(|p| {
-            let mut open = OPEN.lock().unwrap_or_else(|e| e.into_inner());
+            let mut open = OPEN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             open.retain(|(_, w)| w.strong_count() > 0);
             if let Some(b) = open
                 .iter()
@@ -169,6 +172,15 @@ pub fn open_all() -> Vec<Device> {
 }
 
 impl TtBackend {
+    /// Opens the card at `path` and starts the Emulated kernels on one Tensix core.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::DeviceLost`] when the ARC firmware is not alive or the
+    /// core does not answer, [`Error::Unsupported`] for a card other
+    /// than Blackhole, [`Error::InvalidArgument`] for a malformed
+    /// `NUMEROBIS_TT_CORE`, [`Error::BadBinary`] for a kernel image that
+    /// overlaps the mailbox; [`Error::Os`] for failed driver calls.
     pub fn open(path: &str) -> Result<TtBackend> {
         if !super::card::arc_alive(path) {
             return Err(Error::DeviceLost);
@@ -233,7 +245,9 @@ impl TtBackend {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn fence(s: &mut State) -> Fence {
@@ -279,7 +293,7 @@ impl TtBackend {
                     }
                 }
                 Arg::U32(v) => v,
-                Arg::I32(v) => v as u32,
+                Arg::I32(v) => v.cast_unsigned(),
                 Arg::F32(v) => v.to_bits(),
                 #[allow(unreachable_patterns)]
                 _ => return Err(Error::InvalidArgument("unsupported argument".into())),

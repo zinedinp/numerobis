@@ -98,6 +98,11 @@ pub struct Bind<'a> {
 }
 
 impl<'a> Bind<'a> {
+    /// Binds `actual` in place of `recorded` for one [`Stream::replay`](crate::Stream::replay).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when the two lengths differ.
     pub fn new<E: Elem>(
         recorded: &'a DeviceBuffer<E>,
         actual: &'a DeviceBuffer<E>,
@@ -123,13 +128,16 @@ pub(crate) struct Plan {
 }
 
 impl CommandList {
+    #[must_use]
     pub fn len(&self) -> usize {
         self.cmds.len()
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cmds.is_empty()
     }
     /// Every launch is on a bit-exact tier.
+    #[must_use]
     pub fn is_exact(&self) -> bool {
         self.cmds.iter().all(|c| !c.approx)
     }

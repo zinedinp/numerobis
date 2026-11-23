@@ -80,19 +80,23 @@ impl<E: Elem> DeviceBuffer<E> {
     }
 
     /// Number of elements.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Device bytes, including block scales.
+    #[must_use]
     pub fn bytes(&self) -> usize {
         self.raw.bytes
     }
 
+    #[must_use]
     pub fn format(&self) -> Format {
         E::FORMAT
     }
@@ -101,6 +105,7 @@ impl<E: Elem> DeviceBuffer<E> {
     /// or through an input). Such a buffer is fine for display, but an
     /// [`Exactness::Bit`](crate::Exactness) stream refuses to read it.
     /// [`Stream::upload`](crate::Stream::upload) makes it exact again.
+    #[must_use]
     pub fn is_exact(&self) -> bool {
         !self.raw.is_approx()
     }
@@ -108,6 +113,10 @@ impl<E: Elem> DeviceBuffer<E> {
     /// Exports the buffer as a dma-buf (zero-copy sharing with Vulkan, KMS,
     /// V4L2, other accelerators). Synchronise with [`Pending::signal_timeline`](crate::Pending::signal_timeline)
     /// or a sync file before the consumer reads it. Linux only.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`](crate::Error::Unsupported) when the backend cannot export dma-bufs.
     #[cfg(target_os = "linux")]
     pub fn export_dmabuf(&self) -> crate::Result<OwnedFd> {
         self.raw.backend.export_dmabuf(self.raw.id)
@@ -150,25 +159,30 @@ impl<E: Elem> HostCopy<E> {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Raw device layout (see [`elem`](crate::elem)), for the miraculix codecs.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
 
+    #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
 }
 
 impl<E: HostRepr> HostCopy<E> {
+    #[must_use]
     pub fn to_vec(&self) -> Vec<E::Host> {
         from_bytes(&self.bytes)
     }

@@ -125,7 +125,7 @@ pub fn is_instance_extension(name: &CStr) -> bool {
 /// `vkGetPhysicalDeviceFeatures2KHR` and to feature structs at device creation.
 pub const GET_PHYSICAL_DEVICE_PROPERTIES2: &CStr = c"VK_KHR_get_physical_device_properties2";
 /// `VK_KHR_portability_enumeration`: without it a 1.3.216+ loader hides
-/// portability drivers such as MoltenVK.
+/// portability drivers such as `MoltenVK`.
 pub const PORTABILITY_ENUMERATION: &CStr = c"VK_KHR_portability_enumeration";
 /// `VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR`, goes with
 /// [`PORTABILITY_ENUMERATION`].

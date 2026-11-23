@@ -82,7 +82,7 @@ pub(super) fn run(
 }
 
 fn act_from_code(c: u32) -> Option<ActKind> {
-    use ActKind::*;
+    use ActKind::{Clamp, Exp, Gelu, LeakyRelu, Relu, Sigmoid, Silu, Tanh};
     [Relu, LeakyRelu, Sigmoid, Tanh, Silu, Gelu, Clamp, Exp]
         .into_iter()
         .find(|a| a.code() == c)

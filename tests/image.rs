@@ -2,6 +2,15 @@
 //! Emulated kernels must match the mock oracle bit for bit, and the oracle
 //! must be close to the textbook functions.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "test data is built with bit-level casts; shapes are named as in the math"
+)]
+
 mod common;
 
 use common::*;
@@ -110,8 +119,8 @@ fn activations_accuracy() {
             .iter()
             .zip(got)
             .map(|(&x, &g)| {
-                let w = f(x as f64);
-                ((g as f64 - w).abs() / w.abs().max(1e-30)).min((g as f64 - w).abs())
+                let w = f(f64::from(x));
+                ((f64::from(g) - w).abs() / w.abs().max(1e-30)).min((f64::from(g) - w).abs())
             })
             .fold(0.0f64, f64::max);
         assert!(worst < tol, "{name}: worst error {worst:e}");
@@ -126,7 +135,8 @@ fn activations_accuracy() {
             &|x: f64| {
                 0.5 * x
                     * (1.0
-                        + ((2.0 / std::f64::consts::PI).sqrt() * (x + 0.044715 * x * x * x)).tanh())
+                        + ((2.0 / std::f64::consts::PI).sqrt() * (x + 0.044_715 * x * x * x))
+                            .tanh())
             },
             8e-7,
         ),

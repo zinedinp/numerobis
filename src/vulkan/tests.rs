@@ -156,7 +156,7 @@ fn every_capability_has_a_unique_name_and_valid_routes() {
                         assert!(chain.index(field).is_some(), "{} {field}", spec.name);
                     }
                 }
-                Route::Extension { fields, .. } => assert!(fields.is_empty()),
+                Route::Extension { fields, .. } => assert_eq!(fields, [] as [&str; 0]),
                 Route::Subgroup { .. } => {}
             }
             // A promoted extension needs a core route before it that
@@ -178,15 +178,15 @@ fn versions_pack_like_vulkan() {
     let v13 = (1 << 22) | (3 << 12);
     assert_eq!(V::V1_3.raw(), v13);
     assert_eq!(
-        raw(v13 | 280),
+        raw(v13 + 280),
         V {
             patch: 280,
             ..V::V1_3
         }
     );
-    assert!(raw(v13 | 280) >= V::V1_3);
-    assert!(raw(v13 | 280) < V::V1_4);
-    assert_eq!(raw(v13 | 280).to_string(), "1.3.280");
+    assert!(raw(v13 + 280) >= V::V1_3);
+    assert!(raw(v13 + 280) < V::V1_4);
+    assert_eq!(raw(v13 + 280).to_string(), "1.3.280");
     // Vulkan SC 1.0 is variant 1.
     assert_eq!(V::from_raw((1 << 29) | (1 << 22)), None);
 }
@@ -259,7 +259,7 @@ const WANTED: &[Capability] = &[
 fn at_1_3_the_core_structs_carry_everything_promoted() {
     let offer = Offer::new(
         V::V1_4,
-        raw(V::V1_3.raw() | 280),
+        raw(V::V1_3.raw() + 280),
         ARC_EXTENSIONS.iter().copied(),
     );
     let mut probe = Probe::new(offer, WANTED);
@@ -282,7 +282,7 @@ fn at_1_3_the_core_structs_carry_everything_promoted() {
         operations: sg::BASIC | sg::VOTE | sg::ARITHMETIC | sg::BALLOT,
     });
     let plan = probe.plan();
-    assert_eq!(plan.api, raw(V::V1_3.raw() | 280));
+    assert_eq!(plan.api, raw(V::V1_3.raw() + 280));
     for &cap in WANTED {
         assert!(plan.has(cap), "{cap:?}\n{plan}");
     }
@@ -304,8 +304,7 @@ fn at_1_3_the_core_structs_carry_everything_promoted() {
         enabled
             .iter()
             .find(|(c, _)| *c == chain)
-            .map(|(_, on)| on.clone())
-            .unwrap_or_default()
+            .map_or_else(Vec::new, |(_, on)| on.clone())
     };
     assert_eq!(
         on(Chain::Core10),
@@ -410,8 +409,8 @@ fn an_available_route_that_says_no_ends_the_waterfall() {
     let plan = probe.plan();
     let latest = plan.outcome(Capability::FifoLatestReady).expect("asked");
     assert_eq!(latest.verdict, Verdict::Off("presentModeFifoLatestReady"));
-    assert!(latest.skipped.is_empty());
-    assert!(plan.extensions().is_empty());
+    assert_eq!(latest.skipped.len(), 0, "{:?}", latest.skipped);
+    assert_eq!(plan.extensions(), [] as [&CStr; 0]);
     let count = plan.outcome(Capability::DrawIndirectCount).expect("asked");
     assert_eq!(count.verdict, Verdict::Off("drawIndirectCount"));
     assert!(plan.to_string().contains(
@@ -497,12 +496,12 @@ fn every_chain_route_comes_after_the_core_route_that_absorbs_it() {
     for &cap in Capability::ALL {
         let spec = cap.spec();
         for (i, route) in spec.routes.iter().enumerate() {
-            let chain = match *route {
-                Route::Core { chain, .. }
-                | Route::Extension {
-                    chain: Some(chain), ..
-                } => chain,
-                _ => continue,
+            let (Route::Core { chain, .. }
+            | Route::Extension {
+                chain: Some(chain), ..
+            }) = *route
+            else {
+                continue;
             };
             if let Some((since, by)) = chain.absorbed_by() {
                 let covered = spec.routes[..i].iter().any(|r| {
@@ -643,7 +642,7 @@ fn a_1_0_instance_needs_get_physical_device_properties2() {
         V::NEWEST,
         [features::GET_PHYSICAL_DEVICE_PROPERTIES2],
     );
-    assert!(modern.extensions().is_empty());
+    assert_eq!(modern.extensions(), [] as [&CStr; 0]);
 }
 
 #[test]
@@ -695,9 +694,9 @@ fn portability_drivers_are_enumerated_and_their_subset_enabled() {
         "{plan}"
     );
     // A regular driver: nothing extra.
-    let plain = Probe::new(Offer::new(V::V1_3, V::V1_3, []), &[]).plan();
-    assert!(!plain.is_portability_subset());
-    assert!(plain.extensions().is_empty());
+    let regular = Probe::new(Offer::new(V::V1_3, V::V1_3, []), &[]).plan();
+    assert!(!regular.is_portability_subset());
+    assert_eq!(regular.extensions(), [] as [&CStr; 0]);
 }
 
 fn chain_bits(device: &mut super::DeviceChain) -> Vec<(Chain, Vec<&'static str>)> {

@@ -50,14 +50,14 @@ pub enum OpSig {
         act: ActKind,
     },
     /// Direct 2-D convolution, NCHW / KCRS / NKPQ.
-    /// Args: `[x, w, bias (F32, or x when absent), y, params (U32 buffer, `conv::PARAM_WORDS`)]`.
+    /// Args: `[x, w, bias (F32, or x when absent), y, params (U32 buffer, ``conv::PARAM_WORDS``)]`.
     Conv2d {
         x: Format,
         w: Format,
         y: Format,
         bias: bool,
     },
-    /// Image resize of `planes` HxW planes to HoxWo.
+    /// Image resize of `planes` `HxW` planes to `HoxWo`.
     /// Args: `[src, dst, planes, h, w, ho, wo: U32]`.
     Resize {
         src: Format,
@@ -81,9 +81,11 @@ pub enum ActKind {
 
 impl ActKind {
     /// Kernel code (`NB_ACT_*` in `kernels/include/nb_math.h`).
+    #[must_use]
     pub fn code(self) -> u32 {
         self as u32
     }
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             ActKind::Relu => "relu",
@@ -97,6 +99,7 @@ impl ActKind {
         }
     }
     /// Pure selects/compares: identical on every tier (no rounding inside).
+    #[must_use]
     pub fn is_selection(self) -> bool {
         matches!(self, ActKind::Relu | ActKind::Clamp)
     }
@@ -111,9 +114,11 @@ pub enum ResizeMode {
 }
 
 impl ResizeMode {
+    #[must_use]
     pub fn code(self) -> u32 {
         self as u32
     }
+    #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             ResizeMode::Nearest => "nearest",
@@ -132,6 +137,7 @@ pub struct KernelKey {
 
 impl OpSig {
     /// Kernel name following the miraculix `<op>_<type>` convention.
+    #[must_use]
     pub fn name(&self, batched: bool) -> String {
         match *self {
             OpSig::Convert { from, to } => format!("convert_{}_{}", from.name(), to.name()),
@@ -170,6 +176,7 @@ impl OpSig {
     /// transcendental activations) is bit-exact only on [`Tier::Emulated`];
     /// vendor tiers (XMX, MFMA, Tensix FPU, native `exp`) reorder or
     /// approximate. See [`Exactness`](crate::Exactness).
+    #[must_use]
     pub fn exact_on(&self, tier: Tier) -> bool {
         if tier == Tier::Emulated {
             return true;
@@ -223,22 +230,60 @@ pub trait Backend: Send + Sync + 'static {
     fn features(&self) -> &FeatureSet;
 
     /// Allocates `bytes` of device memory (contents unspecified).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::OutOfMemory`](crate::Error::OutOfMemory) when the device has no room. Errors of the
+    /// device pass through.
     fn alloc(&self, bytes: usize) -> Result<BufId>;
     /// Releases a buffer. Called only after all work using it has retired.
     fn free(&self, id: BufId);
 
     /// Copies host bytes into the buffer through internal staging.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) for a range outside the buffer.
+    /// Errors of the device pass through.
     fn upload(&self, id: BufId, offset: usize, src: &[u8]) -> Result<Fence>;
     /// Starts a device -> staging copy of `len` bytes.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) for a range outside the buffer.
+    /// Errors of the device pass through.
     fn download(&self, id: BufId, offset: usize, len: usize) -> Result<Fence>;
     /// After `fence` (from [`download`](Self::download)) has signalled, copies the staged bytes out.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when `fence` is not a download of
+    /// this backend or `dst` has another length.
     fn take_download(&self, fence: Fence, dst: &mut [u8]) -> Result<()>;
 
     /// Is there a kernel for this key? Must be cheap; used by `auto_up`.
     fn supports(&self, key: &KernelKey) -> bool;
+    /// Loads the kernel `key` names.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`](crate::Error::Unsupported) when there is no such kernel,
+    /// [`Error::BadBinary`](crate::Error::BadBinary) when its binary does not load.
     fn load_kernel(&self, key: &KernelKey) -> Result<KernelId>;
+    /// Launches `kernel` with `args`; returns the fence of the launch.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) for arguments the kernel can't
+    /// take. Errors of the device pass through.
     fn dispatch(&self, kernel: KernelId, args: &[Arg]) -> Result<Fence>;
 
+    /// Blocks until `fence` has signalled.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Timeout`](crate::Error::Timeout) when `fence` has not signalled after `timeout`,
+    /// [`Error::DeviceLost`](crate::Error::DeviceLost) when the device died.
     fn wait(&self, fence: Fence, timeout: Duration) -> Result<()>;
     /// Device time between start and end of the work behind `fence`, once signalled.
     fn elapsed(&self, fence: Fence) -> Option<Duration>;
@@ -246,6 +291,10 @@ pub trait Backend: Send + Sync + 'static {
     /// Submits several dispatches in queue order as one unit (a recorded
     /// [`CommandList`](crate::CommandList)); returns the fence of the last.
     /// Backends with a real command buffer override this to submit once.
+    ///
+    /// # Errors
+    ///
+    /// As [`dispatch`](Self::dispatch), for the first launch that fails.
     fn dispatch_batch(&self, cmds: &[(KernelId, &[Arg])]) -> Result<Fence> {
         let mut last = None;
         for (k, a) in cmds {
@@ -256,6 +305,11 @@ pub trait Backend: Send + Sync + 'static {
 
     /// Exports the buffer as a dma-buf (DRM PRIME, udmabuf, tt-kmd TLB export).
     /// dma-bufs and sync files are Linux kernel objects: Linux only.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`](crate::Error::Unsupported) on backends without dma-buf export (the
+    /// default).
     #[cfg(target_os = "linux")]
     fn export_dmabuf(&self, _id: BufId) -> Result<OwnedFd> {
         Err(crate::Error::Unsupported(format!(
@@ -264,6 +318,11 @@ pub trait Backend: Send + Sync + 'static {
         )))
     }
     /// Imports a dma-buf of `bytes` bytes as a buffer of this device, without a copy.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Unsupported`](crate::Error::Unsupported) on backends without dma-buf import (the
+    /// default).
     #[cfg(target_os = "linux")]
     fn import_dmabuf(&self, _fd: BorrowedFd<'_>, _bytes: usize) -> Result<BufId> {
         Err(crate::Error::Unsupported(format!(

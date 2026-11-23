@@ -50,6 +50,7 @@ impl Device {
 
     /// A host-emulated device for tests (feature `mock`).
     #[cfg(feature = "mock")]
+    #[must_use]
     pub fn mock() -> Device {
         Device::from_backend(Arc::new(crate::mock::MockBackend::new(DeviceClass::Gpu)))
     }
@@ -58,6 +59,7 @@ impl Device {
     ///
     /// Every raw backend of the enabled features (`nvidia`, `tt`). Devices
     /// that fail to open are skipped.
+    #[must_use]
     pub fn all() -> Vec<Device> {
         #[allow(unused_mut)]
         let mut v = Vec::new();
@@ -68,14 +70,21 @@ impl Device {
         v
     }
 
+    /// The device `placement` picks among [`Device::all`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::NoDevice`](crate::Error::NoDevice) when no device of [`Device::all`] matches.
     pub fn open(placement: Placement) -> Result<Device> {
         placement.pick(&Device::all()).ok_or(Error::NoDevice)
     }
 
+    #[must_use]
     pub fn features(&self) -> &FeatureSet {
         self.inner.backend.features()
     }
 
+    #[must_use]
     pub fn stream(&self) -> Stream {
         Stream::new(self.clone())
     }
@@ -85,7 +94,11 @@ impl Device {
     }
 
     pub(crate) fn kernel(&self, key: &KernelKey) -> Result<KernelId> {
-        let mut cache = self.inner.kernels.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self
+            .inner
+            .kernels
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(&k) = cache.get(key) {
             return Ok(k);
         }
@@ -97,6 +110,7 @@ impl Device {
 
 impl Placement {
     /// Picks from `devices` (only those with a matrix engine).
+    #[must_use]
     pub fn pick(self, devices: &[Device]) -> Option<Device> {
         let matrix = |d: &&Device| d.features().access(Engine::Matrix).is_some();
         match self {
@@ -105,8 +119,7 @@ impl Placement {
                 let rank = |d: &Device| {
                     let class = match (self, d.features().class) {
                         (Placement::LowPower, DeviceClass::Npu) => 2,
-                        (Placement::LowPower, _) => 1,
-                        (_, DeviceClass::Npu) => 1,
+                        (Placement::LowPower, _) | (_, DeviceClass::Npu) => 1,
                         _ => 2,
                     };
                     (class, d.features().tiers.len())

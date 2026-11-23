@@ -46,10 +46,10 @@ pub(super) fn run(mem: &mut Mem, fa: Format, fb: Format, acc: Format, args: &[Ar
             codec::decode_f32(fb, &bb, lb)?,
         );
         // beta == 0: C is not read, so NaNs in it do not propagate.
-        let cv = if beta != 0.0 {
-            codec::decode_f32(acc, &cb, lc)?
-        } else {
+        let cv = if beta == 0.0 {
             vec![0.0; lc]
+        } else {
+            codec::decode_f32(acc, &cb, lc)?
         };
         let c = mm(
             &av,
@@ -59,10 +59,10 @@ pub(super) fn run(mem: &mut Mem, fa: Format, fb: Format, acc: Format, args: &[Ar
             0f32,
             |s, x, y| x.mul_add(y, s),
             |s, old| {
-                if beta != 0.0 {
-                    alpha * s + beta * old
-                } else {
+                if beta == 0.0 {
                     alpha * s
+                } else {
+                    alpha * s + beta * old
                 }
             },
         );

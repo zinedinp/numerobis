@@ -14,7 +14,21 @@ use std::sync::atomic::{Ordering, fence};
 use std::time::{Duration, Instant};
 
 use super::gpu::{Alloc, Gpu, Mem};
-use super::sys::*;
+use super::sys::{
+    AMPERE_CHANNEL_GPFIFO_A, FERMI_CONTEXT_SHARE_A, GPFIFO_CONTROL_GPGET, GPFIFO_CONTROL_GPPUT,
+    KEPLER_CHANNEL_GROUP_A, LAUNCH_DMA_COPY, NV_CHANNEL_ALLOC_PARAMS,
+    NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS, NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC,
+    NV_CTXSHARE_ALLOCATION_PARAMETERS, NV2080_ENGINE_TYPE_GRAPHICS,
+    NVA06C_CTRL_CMD_GPFIFO_SCHEDULE, NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS, NVC7B5_LAUNCH_DMA,
+    NVC7B5_LINE_LENGTH_IN, NVC7B5_OFFSET_IN_UPPER, NVC7C0_SET_OBJECT,
+    NVC7C0_SET_SHADER_LOCAL_MEMORY_A, NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A,
+    NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A, NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A,
+    NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,
+    NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS, NVC56F_NON_STALL_INTERRUPT,
+    NVC56F_SEM_ADDR_LO, NvHandle, SEM_EXECUTE_ACQ_CIRC_GEQ, SEM_EXECUTE_PAYLOAD_SIZE_64BIT,
+    SEM_EXECUTE_RELEASE, SEM_EXECUTE_RELEASE_TIMESTAMP, SEM_EXECUTE_RELEASE_WFI, SUBC_COMPUTE,
+    SUBC_COPY, USERMODE_NOTIFY_CHANNEL_PENDING, method, rm_alloc, rm_control,
+};
 use crate::runtime::error::{Error, Result};
 use crate::runtime::os::View;
 
@@ -108,6 +122,10 @@ fn data64(v: u64) -> [u32; 2] {
 }
 
 impl Queues {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "channel group, both channels and their engines, in the order RM wants them"
+    )]
     pub fn new(gpu: &Gpu, compute_class: u32, copy_class: u32) -> Result<Queues> {
         let mut gp = NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS {
             engineType: NV2080_ENGINE_TYPE_GRAPHICS,
@@ -120,7 +138,7 @@ impl Queues {
             KEPLER_CHANNEL_GROUP_A,
             Some(&mut gp),
         )?;
-        let area = gpu.alloc(2 << 20, Mem::VramMapped)?;
+        let gpfifo = gpu.alloc(2 << 20, Mem::VramMapped)?;
         let mut cp = NV_CTXSHARE_ALLOCATION_PARAMETERS {
             hVASpace: gpu.vaspace,
             flags: NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC,
@@ -137,14 +155,14 @@ impl Queues {
         let channel = |offset: u64| -> Result<Channel> {
             let mut p = NV_CHANNEL_ALLOC_PARAMS {
                 hObjectError: notifier.handle(),
-                hObjectBuffer: area.handle(),
-                gpFifoOffset: area.va + offset,
+                hObjectBuffer: gpfifo.handle(),
+                gpFifoOffset: gpfifo.va + offset,
                 gpFifoEntries: ENTRIES,
                 hContextShare: ctxshare,
                 ..Default::default()
             };
-            p.hUserdMemory[0] = area.handle();
-            p.userdOffset[0] = offset + ENTRIES as u64 * 8;
+            p.hUserdMemory[0] = gpfifo.handle();
+            p.userdOffset[0] = offset + u64::from(ENTRIES) * 8;
             let ch = rm_alloc(
                 &gpu.ctl,
                 gpu.root,
@@ -166,14 +184,16 @@ impl Queues {
             )?;
             let base = gpu.reserve_va(64 << 20)?;
             gpu.register_channel(ch, base, 64 << 20)?;
-            let cpu = area.cpu();
+            let cpu = gpfifo.cpu();
             Ok(Channel {
                 ring: View {
                     ptr: cpu.ptr.wrapping_add(offset as usize),
                     len: ENTRIES as usize * 8,
                 },
                 controls: View {
-                    ptr: cpu.ptr.wrapping_add((offset + ENTRIES as u64 * 8) as usize),
+                    ptr: cpu
+                        .ptr
+                        .wrapping_add((offset + u64::from(ENTRIES) * 8) as usize),
                     len: 512,
                 },
                 put: 0,
@@ -202,7 +222,7 @@ impl Queues {
         };
         Ok(Queues {
             _group: group,
-            _area: area,
+            _area: gpfifo,
             _notifier: notifier,
             compute,
             copy,

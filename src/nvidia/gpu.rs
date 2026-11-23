@@ -10,7 +10,37 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use super::sys::*;
+use super::sys::{
+    FERMI_VASPACE_A, GR_INFO_LITTER_NUM_GPCS, GR_INFO_LITTER_NUM_SM_PER_TPC,
+    GR_INFO_LITTER_NUM_TPC_PER_GPC, GR_INFO_MAX_WARPS_PER_SM, GR_INFO_SM_VERSION,
+    NV_DEVICE_ALLOCATION_VAMODE_MULTIPLE_VASPACES, NV_ESC_CARD_INFO, NV_ESC_REGISTER_FD,
+    NV_ESC_RM_ALLOC_MEMORY, NV_ESC_RM_MAP_MEMORY, NV_IOCTL_MAGIC, NV_MEMORY_ALLOCATION_PARAMS,
+    NV_OK, NV_VASPACE_ALLOCATION_FLAGS_ENABLE_PAGE_FAULTING,
+    NV_VASPACE_ALLOCATION_FLAGS_IS_EXTERNALLY_OWNED, NV_VASPACE_ALLOCATION_PARAMETERS,
+    NV_WARN_NOTHING_TO_DO, NV0000_CTRL_CMD_GPU_GET_ID_INFO_V2,
+    NV0000_CTRL_GPU_GET_ID_INFO_V2_PARAMS, NV01_DEVICE_0, NV01_MEMORY_SYSTEM_OS_DESCRIPTOR,
+    NV1_MEMORY_USER, NV01_ROOT_CLIENT, NV20_SUBDEVICE_0, NV0080_ALLOC_PARAMETERS,
+    NV2080_ALLOC_PARAMETERS, NV2080_CTRL_CMD_GPU_GET_GID_INFO, NV2080_CTRL_CMD_GPU_GET_NAME_STRING,
+    NV2080_CTRL_CMD_GR_GET_INFO, NV2080_CTRL_CMD_MC_GET_ARCH_INFO,
+    NV2080_CTRL_GPU_GET_GID_INFO_PARAMS, NV2080_CTRL_GPU_GET_NAME_STRING_PARAMS,
+    NV2080_CTRL_GR_GET_INFO_PARAMS, NV2080_CTRL_GR_INFO, NV2080_CTRL_MC_GET_ARCH_INFO_PARAMS,
+    NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT_BINARY, NVOS02_FLAGS_COHERENCY_CACHED,
+    NVOS02_FLAGS_MAPPING_NO_MAP, NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS, NVOS02_PARAMETERS,
+    NVOS32_ALLOC_FLAGS_ALIGNMENT_FORCE, NVOS32_ALLOC_FLAGS_MAP_NOT_REQUIRED,
+    NVOS32_ALLOC_FLAGS_MEMORY_HANDLE_PROVIDED, NVOS32_ATTR_PAGE_SIZE_BIG,
+    NVOS32_ATTR_PAGE_SIZE_HUGE, NVOS32_ATTR_PHYSICALITY_ALLOW_NONCONTIGUOUS,
+    NVOS32_ATTR_PHYSICALITY_CONTIGUOUS, NVOS32_ATTR2_GPU_CACHEABLE_YES,
+    NVOS32_ATTR2_PAGE_SIZE_HUGE_2MB, NVOS32_ATTR2_ZBC_PREFER_NO_ZBC, NVOS32_TYPE_IMAGE,
+    NVOS33_FLAGS_ACCESS_WRITE_ONLY, NVOS33_FLAGS_FIFO_AREA, NVOS33_PARAMETERS, NvHandle,
+    TURING_USERMODE_A, UVM_CREATE_EXTERNAL_RANGE, UVM_CREATE_EXTERNAL_RANGE_PARAMS, UVM_FREE,
+    UVM_FREE_PARAMS, UVM_GPU_MAPPING_READ_WRITE_ATOMIC, UVM_INITIALIZE, UVM_INITIALIZE_PARAMS,
+    UVM_MAP_EXTERNAL_ALLOCATION, UVM_MAP_EXTERNAL_ALLOCATION_PARAMS, UVM_MAX_GPUS,
+    UVM_MM_INITIALIZE, UVM_MM_INITIALIZE_PARAMS, UVM_REGISTER_CHANNEL, UVM_REGISTER_CHANNEL_PARAMS,
+    UVM_REGISTER_GPU, UVM_REGISTER_GPU_PARAMS, UVM_REGISTER_GPU_VASPACE,
+    UVM_REGISTER_GPU_VASPACE_PARAMS, UvmGpuMappingAttributes, nv_ioctl_card_info_t,
+    nv_ioctl_nvos02_parameters_with_fd, nv_ioctl_nvos33_parameters_with_fd, nv_ioctl_register_fd_t,
+    rm_alloc, rm_control, rm_escape, rm_free, status, uvm,
+};
 use crate::runtime::error::{Error, Result};
 use crate::runtime::os::{Fd, Map, RW, View};
 
@@ -199,8 +229,8 @@ pub fn cards(ctl: &Fd) -> Result<Vec<(u32, u32, u16)>> {
                 NV_IOCTL_MAGIC,
                 NV_ESC_CARD_INFO,
             ),
-            &mut info,
-        )?
+            &raw mut info,
+        )?;
     };
     Ok(info
         .iter()
@@ -211,6 +241,10 @@ pub fn cards(ctl: &Fd) -> Result<Vec<(u32, u32, u16)>> {
 
 impl Gpu {
     /// Opens the GPU with RM id `gpu_id` and `/dev/nvidia<minor>`.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one RM bring-up sequence, read in the order the driver wants it"
+    )]
     pub fn open(ctl: Fd, minor: u32, gpu_id: u32) -> Result<Gpu> {
         let root = rm_alloc::<()>(&ctl, 0, 0, NV01_ROOT_CLIENT, None)?;
 
@@ -437,7 +471,7 @@ impl Gpu {
         unsafe {
             uvm(&self.uvm.fd, UVM_CREATE_EXTERNAL_RANGE, &mut r, |p| {
                 p.rmStatus
-            })?
+            })?;
         };
         let mut m = Box::new(UVM_MAP_EXTERNAL_ALLOCATION_PARAMS {
             base: va,
@@ -479,7 +513,7 @@ impl Gpu {
     fn va_alloc(&self, size: u64) -> Result<u64> {
         self.va
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .alloc(size)
             .ok_or(Error::OutOfMemory {
                 requested: size as usize,
@@ -497,7 +531,7 @@ impl Gpu {
         }
         self.va
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .release(va, size);
     }
 
@@ -517,6 +551,10 @@ impl Gpu {
         made
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "allocate, map and undo on failure step by step, in one place"
+    )]
     fn alloc_at(&self, va: u64, size: u64, kind: Mem) -> Result<Alloc> {
         let handle = match kind {
             Mem::Sys => {
@@ -629,6 +667,10 @@ impl Gpu {
     }
 
     /// Releases an allocation. The caller guarantees the GPU is done with it.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "taking the Alloc ends its use: no free twice, no use after free"
+    )]
     pub fn free(&self, a: Alloc) {
         self.uvm_free(a.va);
         let _ = rm_free(&self.ctl, self.root, self.device, a.handle);

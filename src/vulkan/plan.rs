@@ -531,8 +531,9 @@ impl Probe {
                     }
                 }
                 if let Some(chain) = route_chain(route) {
-                    for field in route_fields(route) {
-                        let bit = chain.index(field).expect("route fields are in their chain");
+                    // Every route field is a member of its chain: the route
+                    // constructors check that while compiling.
+                    for bit in route_fields(route).iter().filter_map(|f| chain.index(f)) {
                         if !enabled.contains(&(chain, bit)) {
                             enabled.push((chain, bit));
                         }

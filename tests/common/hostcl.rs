@@ -219,7 +219,9 @@ fn run(l: &Launch, mem: &mut HashMap<u64, Vec<u8>>, rv32: bool) -> Result<()> {
 
 impl HostCl {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 

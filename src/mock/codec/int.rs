@@ -8,8 +8,8 @@ use crate::elem::{Format, as_bytes, from_bytes};
 pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<i32>> {
     Some(match fmt {
         Format::I32 => from_bytes(b),
-        Format::I8 => b.iter().map(|&v| v as i8 as i32).collect(),
-        Format::U8 => b.iter().map(|&v| v as i32).collect(),
+        Format::I8 => b.iter().map(|&v| i32::from(v as i8)).collect(),
+        Format::U8 => b.iter().map(|&v| i32::from(v)).collect(),
         Format::Int { bits, signed: true } => {
             let mut v = vec![0i8; len];
             match bits {
@@ -36,6 +36,7 @@ pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<i32>> {
 }
 
 /// `i32` -> device bytes, saturating.
+#[must_use]
 pub fn encode(fmt: Format, src: &[i32]) -> Option<Vec<u8>> {
     let mut out = vec![0u8; fmt.storage_bytes(src.len())?];
     let s8: Vec<i8> = src.iter().map(|&v| v.clamp(-128, 127) as i8).collect();

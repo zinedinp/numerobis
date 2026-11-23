@@ -1,4 +1,4 @@
-//! Block-scaled element types: OCP MX, NVFP4, Tenstorrent BFP_B, GGUF.
+//! Block-scaled element types: OCP MX, NVFP4, Tenstorrent `BFP_B`, GGUF.
 
 use miraculix::formats::bfp::BfpElem;
 use miraculix::formats::mx::MxElem;

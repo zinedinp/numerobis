@@ -347,7 +347,7 @@ mod tests {
             "566.36.0.0"
         );
         // Intel on Windows, 101.6559: 101 << 14 | 6559.
-        let intel = (101 << 14) | 6559;
+        let intel = (101 << 14) + 6559;
         assert_eq!(
             driver_version(Vendor::Intel, intel, DriverOs::Windows),
             "101.6559"

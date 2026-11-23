@@ -1,4 +1,11 @@
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "shared by test crates that each use a part; host-cl args are bit-level"
+)]
 
 use numerobis::elem::*;
 use numerobis::{Choice, DeviceBuffer, Overflow, Stream, ops};

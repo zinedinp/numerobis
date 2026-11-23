@@ -43,7 +43,7 @@ pub struct Kernel {
 /// A parsed cubin.
 #[derive(Debug, Clone)]
 pub struct Program {
-    /// SM version from `e_flags` (`0x50` = sm_80, ...).
+    /// SM version from `e_flags` (`0x50` = `sm_80`, ...).
     pub sm: u32,
     pub kernels: Vec<Kernel>,
     /// Largest per-thread stack/frame of any function (local memory).
@@ -80,6 +80,12 @@ fn u32le(b: &[u8], o: usize) -> u32 {
 }
 
 impl Program {
+    /// Parses a cubin: its kernels, constant banks and parameter layout.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::BadBinary`] for anything but a linked cubin whose kernels
+    /// have constant bank 0 and gap-free parameters (`EIATTR_PARAM_CBANK`).
     pub fn parse(image: &[u8]) -> Result<Program> {
         let elf = Elf::parse(image)?;
         if elf.machine != machine::CUDA {
@@ -128,7 +134,7 @@ impl Program {
                     }
                     eiattr::KPARAM_INFO if p.len() >= 12 => {
                         let ordinal = u16::from_le_bytes([p[4], p[5]]) as usize;
-                        let off = u16::from_le_bytes([p[6], p[7]]) as u32;
+                        let off = u32::from(u16::from_le_bytes([p[6], p[7]]));
                         if offsets.len() <= ordinal {
                             offsets.resize(ordinal + 1, u32::MAX);
                         }
@@ -146,8 +152,7 @@ impl Program {
                 .map(|c| (c.offset, c.data.len() as u32));
             let shared = elf
                 .section(&format!(".nv.shared.{name}"))
-                .map(|c| c.size as u32)
-                .unwrap_or(0);
+                .map_or(0, |c| c.size as u32);
             kernels.push(Kernel {
                 name: name.to_string(),
                 text: (s.offset, s.data.len() as u64),
@@ -162,6 +167,7 @@ impl Program {
         Ok(Program { sm, kernels, stack })
     }
 
+    #[must_use]
     pub fn kernel(&self, name: &str) -> Option<&Kernel> {
         self.kernels.iter().find(|k| k.name == name)
     }

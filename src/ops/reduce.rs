@@ -10,6 +10,15 @@ use crate::runtime::{Pending, Stream};
 /// `absmax_block_<src>`: `dst[i] = max |src[i·block .. (i+1)·block]|`, the scale
 /// input for MX / NVFP4 quantization. NaN inputs are ignored. The only
 /// reduction in stage 1.
+///
+/// # Errors
+///
+/// [`Error::InvalidArgument`](crate::Error::InvalidArgument) when `block` is 0 or does not divide
+/// `src`, `dst` does not hold one value per block, or a length is above `u32::MAX`.
+/// [`Error::Unsupported`](crate::Error::Unsupported) when the [`Choice`] finds no
+/// kernel for these formats (on an [`Exactness::Bit`](crate::Exactness::Bit) stream: none that is
+/// bit-exact); [`Error::InvalidArgument`](crate::Error::InvalidArgument) also for a buffer of
+/// another device or an approximate input on such a stream. Errors of the device pass through.
 pub fn absmax_block<S: Elem>(
     s: &mut Stream,
     choice: Choice,

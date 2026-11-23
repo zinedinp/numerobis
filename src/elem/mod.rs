@@ -1,6 +1,6 @@
 //! Element types, split by kind like `miraculix::formats`:
 //! [`float`] (F32, TF32, F16/BF16, FP8, FP6, FP4), [`int`] (I32, I8, U8 and
-//! packed I4/U4/I2/I1) and [`block`] (MX, NVFP4, BFP_B, GGUF).
+//! packed I4/U4/I2/I1) and [`block`] (MX, NVFP4, `BFP_B`, GGUF).
 //!
 //! Each marker is an uninhabited type naming a device storage format. Bit
 //! widths, bias, NaN/Inf kind and block sizes all come from
@@ -69,6 +69,7 @@ pub enum Format {
 
 impl Format {
     /// Lower-case suffix used in kernel names (`gemm_<a>_<b>_<acc>`).
+    #[must_use]
     pub const fn name(self) -> &'static str {
         use MiniFloat as M;
         match self {
@@ -122,6 +123,7 @@ impl Format {
     }
 
     /// Elements per block (1 for byte-aligned element-wise formats). Buffer lengths must be a multiple.
+    #[must_use]
     pub const fn block(self) -> usize {
         match self {
             Format::Mx(_) => MX_BLOCK,
@@ -137,6 +139,7 @@ impl Format {
     }
 
     /// Block-scaled or GGUF format (needs a quantizer, not a plain convert).
+    #[must_use]
     pub const fn is_block_scaled(self) -> bool {
         matches!(
             self,
@@ -145,6 +148,7 @@ impl Format {
     }
 
     /// Integer formats (usable with an `I32` accumulator).
+    #[must_use]
     pub const fn is_integer(self) -> bool {
         matches!(
             self,
@@ -153,6 +157,7 @@ impl Format {
     }
 
     /// Device bytes for `len` elements, or `None` if `len` is not a multiple of [`block`](Self::block).
+    #[must_use]
     pub const fn storage_bytes(self, len: usize) -> Option<usize> {
         if !len.is_multiple_of(self.block()) {
             return None;
@@ -192,7 +197,10 @@ impl Format {
                 Special::Fnuz => 2,
                 Special::Finite => 3,
             };
-            (f.exp_bits() << 4) | (f.man_bits() << 8) | ((f.bias() as u32) << 12) | (sp << 20)
+            (f.exp_bits() << 4)
+                | (f.man_bits() << 8)
+                | (f.bias().cast_unsigned() << 12)
+                | (sp << 20)
         }
         match self {
             Format::F32 => 0,
@@ -201,7 +209,7 @@ impl Format {
             Format::I8 => 3,
             Format::U8 => 4,
             Format::Float(f) => 5 | fl(f),
-            Format::Int { bits, signed } => 6 | ((bits as u32) << 4) | ((signed as u32) << 8),
+            Format::Int { bits, signed } => 6 | (u32::from(bits) << 4) | (u32::from(signed) << 8),
             Format::Mx(e) => 7 | e.float().map_or(1 << 22, fl),
             Format::Nvfp4 => 8,
             Format::Bfp(e) => 9 | (e.mantissa_bits() << 4),
@@ -211,6 +219,7 @@ impl Format {
     }
 
     /// Byte offset of the scale section of a block format (= size of the element data).
+    #[must_use]
     pub const fn scale_offset(self, len: usize) -> usize {
         let blocks = len / self.block();
         match self {

@@ -6,12 +6,22 @@ use crate::runtime::error::{Error, Result};
 use crate::tiers::Tier;
 
 /// Highest tier in the device's ladder that supports `sig`.
+///
+/// # Errors
+///
+/// [`Error::Unsupported`] when no tier of the device has a kernel for
+/// `sig`.
 pub fn choose(dev: &Device, sig: OpSig, batched: bool) -> Result<Tier> {
     choose_with(dev, sig, batched, false)
 }
 
 /// [`choose`], optionally only among tiers on which `sig` is bit-exact
 /// ([`OpSig::exact_on`]): the rule for [`Exactness::Bit`](crate::Exactness) streams.
+///
+/// # Errors
+///
+/// [`Error::Unsupported`] when no tier (with `bit_exact`: no bit-exact
+/// tier) has a kernel for `sig`.
 pub fn choose_with(dev: &Device, sig: OpSig, batched: bool, bit_exact: bool) -> Result<Tier> {
     let name = sig.name(batched);
     dev.features()

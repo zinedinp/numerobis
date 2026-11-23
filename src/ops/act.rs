@@ -24,6 +24,7 @@ pub enum Act {
 }
 
 impl Act {
+    #[must_use]
     pub fn kind(self) -> ActKind {
         match self {
             Act::Relu => ActKind::Relu,
@@ -52,6 +53,15 @@ impl Act {
 /// come from `kernels/include/nb_math.h` (only `+ - * /` and `fma` in a fixed
 /// order), so every device returns the same bits: usable for game state.
 /// `dst` may be a different float format (e.g. F32 in, BF16 out).
+///
+/// # Errors
+///
+/// [`Error::InvalidArgument`](crate::Error::InvalidArgument) for lengths that differ or a `Clamp`
+/// with `lo > hi`. [`Error::Unsupported`](crate::Error::Unsupported) when the
+/// [`Choice`] finds no kernel for these formats (on an
+/// [`Exactness::Bit`](crate::Exactness::Bit) stream: none that is bit-exact);
+/// [`Error::InvalidArgument`](crate::Error::InvalidArgument) also for a buffer of another device or
+/// an approximate input on such a stream. Errors of the device pass through.
 pub fn act<S: FloatElem, D: FloatElem>(
     s: &mut Stream,
     choice: Choice,

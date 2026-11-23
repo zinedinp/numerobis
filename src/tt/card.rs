@@ -1,13 +1,16 @@
-//! One Tenstorrent card: device node, TLB windows into the NoC address
-//! space, and word/bulk access to any NoC endpoint (Tensix L1 and registers,
+//! One Tenstorrent card: device node, TLB windows into the `NoC` address
+//! space, and word/bulk access to any `NoC` endpoint (Tensix L1 and registers,
 //! DRAM).
 //!
-//! A 2 MiB TLB window maps `[addr, addr + 2 MiB)` of one NoC endpoint into
+//! A 2 MiB TLB window maps `[addr, addr + 2 MiB)` of one `NoC` endpoint into
 //! BAR space; [`Noc`] keeps one window and retargets it on demand.
 
 use std::sync::Arc;
 
-use super::sys::*;
+use super::sys::{
+    ALLOCATE_TLB, CONFIGURE_TLB, FREE_TLB, GET_DEVICE_INFO, GET_DRIVER_INFO, ORDER_STRICT,
+    allocate_tlb, call, configure_tlb, free_tlb, get_device_info, get_driver_info, noc_tlb_config,
+};
 use crate::runtime::error::{Error, Result};
 use crate::runtime::os::{Fd, Map, RW};
 
@@ -22,8 +25,8 @@ pub const TLB_2M: u64 = 2 << 20;
 
 /// ARC heartbeat from tt-kmd's sysfs telemetry for `/dev/tenstorrent/N`.
 /// All ones (or no telemetry) means the card's management firmware is not
-/// answering: the NoC must not be touched then, because every MMIO read to a
-/// hung card stalls the reading CPU core for the PCIe completion timeout.
+/// answering: the `NoC` must not be touched then, because every MMIO read to a
+/// hung card stalls the reading CPU core for the `PCIe` completion timeout.
 ///
 /// The sysfs read is itself such an MMIO read in tt-kmd (~220 ms in kernel
 /// mode on a hung card), so a dead result is cached for a minute per process.
@@ -32,7 +35,9 @@ pub fn arc_alive(path: &str) -> bool {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     static DEAD: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
-    let mut dead = DEAD.lock().unwrap_or_else(|e| e.into_inner());
+    let mut dead = DEAD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dead = dead.get_or_insert_with(HashMap::new);
     if dead
         .get(path)
@@ -46,7 +51,7 @@ pub fn arc_alive(path: &str) -> bool {
     ))
     .ok()
     .and_then(|s| s.trim().parse::<u64>().ok())
-    .is_some_and(|v| v != u32::MAX as u64);
+    .is_some_and(|v| v != u64::from(u32::MAX));
     if alive {
         dead.remove(path);
     } else {
@@ -56,6 +61,7 @@ pub fn arc_alive(path: &str) -> bool {
 }
 
 /// Board name from sysfs (`p150a`, `p100a`, ...), if the firmware reports one.
+#[must_use]
 pub fn card_type(path: &str) -> Option<String> {
     let n = path.rsplit('/').next().unwrap_or("0");
     let t = std::fs::read_to_string(format!(
@@ -75,6 +81,12 @@ pub struct Card {
 }
 
 impl Card {
+    /// Opens a tt-kmd device node.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the node cannot be opened or queried,
+    /// [`Error::Unsupported`] for an unknown device id.
     pub fn open(path: &str) -> Result<Card> {
         let fd = Fd::open(path)?;
         let mut info = get_device_info {
@@ -110,6 +122,10 @@ impl Card {
     }
 
     /// Allocates a TLB window of `size` bytes (2 MiB on Blackhole/Wormhole).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the driver has no window of that size left.
     pub fn window(&self, size: u64) -> Result<Window> {
         let mut a = allocate_tlb {
             size,
@@ -161,7 +177,11 @@ pub struct Window {
 }
 
 impl Window {
-    /// Points the window at `(x, y)` NoC0, base `addr` (multiple of the window size).
+    /// Points the window at `(x, y)` `NoC0`, base `addr` (multiple of the window size).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when the driver refuses the configuration.
     pub fn point(&mut self, x: u16, y: u16, addr: u64) -> Result<()> {
         debug_assert!(addr.is_multiple_of(self.size));
         if self.target == Some((x, y, addr)) {
@@ -191,12 +211,17 @@ impl Drop for Window {
     }
 }
 
-/// Word and bulk access to NoC endpoints through one retargeted window.
+/// Word and bulk access to `NoC` endpoints through one retargeted window.
 pub struct Noc {
     w: Window,
 }
 
 impl Noc {
+    /// Word and bulk access to the `NoC` through one 2 MiB window of `card`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Card::window`].
     pub fn new(card: &Card) -> Result<Noc> {
         Ok(Noc {
             w: card.window(TLB_2M)?,
@@ -215,11 +240,23 @@ impl Noc {
         Ok(off)
     }
 
+    /// One 32-bit read at `addr` of tile `(x, y)`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] for an access that crosses a 2 MiB
+    /// window, [`Error::Os`] when the window cannot be moved there.
     pub fn read32(&mut self, x: u16, y: u16, addr: u64) -> Result<u32> {
         let off = self.at(x, y, addr, 4)?;
         Ok(self.w.uc.read32(off))
     }
 
+    /// One 32-bit write at `addr` of tile `(x, y)`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] for an access that crosses a 2 MiB
+    /// window, [`Error::Os`] when the window cannot be moved there.
     pub fn write32(&mut self, x: u16, y: u16, addr: u64, v: u32) -> Result<()> {
         let off = self.at(x, y, addr, 4)?;
         self.w.uc.write32(off, v);
@@ -227,6 +264,11 @@ impl Noc {
     }
 
     /// Bulk write (write-combined, 4-byte granular; `src.len()` padded with zeros).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] for an access that crosses a 2 MiB
+    /// window, [`Error::Os`] when the window cannot be moved there.
     pub fn write(&mut self, x: u16, y: u16, addr: u64, src: &[u8]) -> Result<()> {
         let mut done = 0;
         while done < src.len() {
@@ -253,6 +295,11 @@ impl Noc {
     }
 
     /// Bulk read (4-byte granular).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidArgument`] for an access that crosses a 2 MiB
+    /// window, [`Error::Os`] when the window cannot be moved there.
     pub fn read(&mut self, x: u16, y: u16, addr: u64, dst: &mut [u8]) -> Result<()> {
         let mut done = 0;
         while done < dst.len() {

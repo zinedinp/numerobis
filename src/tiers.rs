@@ -27,6 +27,7 @@ pub enum Tier {
 
 impl Tier {
     /// Short name used in kernel binary paths (`kernels/bin/<vendor>/<tier>/...`).
+    #[must_use]
     pub fn name(self) -> String {
         let (v, t) = match self {
             Tier::Emulated => return "emulated".into(),

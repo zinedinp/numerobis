@@ -3,6 +3,15 @@
 //! bit on random inputs, for every format and op. F32 outputs compare NaN ==
 //! NaN (FP16 decode NaN payloads are host-dependent in miraculix).
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "test data is built with bit-level casts; shapes are named as in the math"
+)]
+
 mod common;
 
 use common::*;

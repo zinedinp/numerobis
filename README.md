@@ -23,7 +23,7 @@ and out are `Stream::upload` / `upload_packed` and `Stream::download`.
 | AMD GPU | `amd` | raw: KFD | gfx908 ... gfx12 | - | planned (HSACO kernels already built) |
 | NPUs | `accel`, `xdna` | raw: `accel` subsystem | Intel NPU, AMD XDNA, RK3588, Ethos-U | - | planned |
 | Raspberry Pi | `v3d` | raw: `v3d` | Pi 4/5 | - | planned |
-| Vulkan, CUDA, HIP | `vulkan`, `cuda`, `hip` | comfort (vendor or portable user space) | any | - | planned the Vulkan feature waterfall for graphics hosts is done, see below) |(
+| Vulkan, CUDA, HIP | `vulkan`, `cuda`, `hip` | comfort (vendor or portable user space) | any | - | planned (the Vulkan feature waterfall for graphics hosts is done, see below) |
 
 "Emulated" is the portable tier: formats are decoded with integer bit logic and
 the math runs in F32 with explicit FMA. It runs on every target. Native matrix

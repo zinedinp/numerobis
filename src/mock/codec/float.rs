@@ -7,9 +7,9 @@ use crate::elem::{Format, as_bytes, from_bytes};
 pub(super) fn get_bits(d: &[u8], i: usize, w: usize) -> u32 {
     let bit = i * w;
     let (byte, off) = (bit / 8, bit % 8);
-    let mut v = (d[byte] as u32) >> off;
+    let mut v = u32::from(d[byte]) >> off;
     if off + w > 8 {
-        v |= (d[byte + 1] as u32) << (8 - off);
+        v |= u32::from(d[byte + 1]) << (8 - off);
     }
     v & ((1 << w) - 1)
 }
@@ -23,6 +23,7 @@ pub(super) fn put_bits(d: &mut [u8], i: usize, w: usize, v: u32) {
     }
 }
 
+#[must_use]
 pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<f32>> {
     let mut out = vec![0.0f32; len];
     match fmt {
@@ -40,6 +41,7 @@ pub fn decode(fmt: Format, b: &[u8], len: usize) -> Option<Vec<f32>> {
     Some(out)
 }
 
+#[must_use]
 pub fn encode(fmt: Format, src: &[f32], overflow: Overflow) -> Option<Vec<u8>> {
     let len = src.len();
     let mut out = vec![0u8; fmt.storage_bytes(len)?];

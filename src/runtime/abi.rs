@@ -40,6 +40,7 @@ pub const SYMBOLS: [&str; 11] = [
 
 /// Element-wise float formats the image ops read and write (one element per
 /// byte or more, so work items never share a byte).
+#[must_use]
 pub fn elementwise_float(f: Format) -> bool {
     matches!(f, Format::F32 | Format::Tf32)
         || (matches!(f, Format::Float(_)) && f.block() == 1 && f.storage_bytes(1).is_some())
@@ -48,6 +49,7 @@ pub fn elementwise_float(f: Format) -> bool {
 /// Which signatures the shared Emulated kernels implement (every SIMT
 /// backend's `supports` for [`Tier::Emulated`](crate::Tier::Emulated); the mock
 /// oracle covers the same set).
+#[must_use]
 pub fn supported(sig: OpSig) -> bool {
     use miraculix::formats::MiniFloat;
     match sig {
@@ -75,15 +77,48 @@ fn bad(sig: OpSig) -> Error {
     Error::InvalidArgument(format!("bad arguments for {}", sig.name(false)))
 }
 
-fn u(args: &[Arg], i: usize) -> Option<u32> {
-    match args.get(i)? {
-        Arg::U32(v) => Some(*v),
-        _ => None,
+/// The op arguments, read by position as documented on [`OpSig`].
+#[derive(Clone, Copy)]
+struct Args<'a>(&'a [Arg]);
+
+impl Args<'_> {
+    fn u32(self, i: usize) -> Option<u32> {
+        match self.0.get(i)? {
+            Arg::U32(v) => Some(*v),
+            _ => None,
+        }
     }
+
+    fn usize(self, i: usize) -> Option<usize> {
+        self.u32(i).map(|v| v as usize)
+    }
+
+    fn get(self, i: usize) -> Option<Arg> {
+        self.0.get(i).copied()
+    }
+
+    /// The first `n` arguments, passed through unchanged.
+    fn head(self, n: usize) -> Option<Vec<Arg>> {
+        Some(self.0.get(..n)?.to_vec())
+    }
+
+    /// `[src, dst, len]`, the start of every element-wise op.
+    fn unary(self) -> Option<(Arg, Arg, u32)> {
+        Some((self.get(0)?, self.get(1)?, self.u32(2)?))
+    }
+}
+
+fn u32_arg(v: usize) -> Option<Arg> {
+    Some(Arg::U32(u32::try_from(v).ok()?))
 }
 
 fn items(n: usize) -> Option<u32> {
     u32::try_from(n).ok()
+}
+
+/// `a * b * c` without wrapping.
+fn product(a: usize, b: usize, c: usize) -> Option<usize> {
+    a.checked_mul(b)?.checked_mul(c)
 }
 
 /// The byte format a packed integer widens to.
@@ -95,6 +130,11 @@ fn wide(f: Format) -> Format {
 }
 
 /// Lowers one op to its kernel launches.
+///
+/// # Errors
+///
+/// [`Error::InvalidArgument`] when `args` don't match `sig` (count
+/// or kinds), or a launch would exceed `u32::MAX` work items or offsets.
 pub fn lower(sig: OpSig, args: &[Arg]) -> Result<Vec<Launch>> {
     lower_opt(sig, args).ok_or_else(|| bad(sig))
 }
@@ -108,156 +148,207 @@ fn launch(symbol: &'static str, args: Vec<Arg>, n: usize) -> Option<Launch> {
 }
 
 fn lower_opt(sig: OpSig, a: &[Arg]) -> Option<Vec<Launch>> {
-    // Element count (arg 2) for every op but GEMM, whose arg 2 is C.
-    let len = u(a, 2).map(|v| v as usize);
-    let (src, dst) = (*a.first()?, *a.get(1)?);
-    let u32a = |v: usize| Some(Arg::U32(u32::try_from(v).ok()?));
-    Some(match sig {
-        OpSig::Convert { from, to } => {
-            let len = len?;
-            let group = from.block().max(to.block());
-            let sat = Arg::U32((u(a, 3)? == 0) as u32);
+    let a = Args(a);
+    match sig {
+        OpSig::Convert { from, to } => convert(a, from, to),
+        OpSig::Pack { to } => int_convert(a, wide(to), to),
+        OpSig::Unpack { from } => int_convert(a, from, wide(from)),
+        OpSig::Quantize { to } => quantize(a, to),
+        OpSig::Dequantize { from } => dequantize(a, from),
+        OpSig::Gemm { a: fa, b: fb, acc } => gemm(a, fa, fb, acc),
+        OpSig::AbsmaxBlock { src } => absmax_block(a, src),
+        OpSig::Act { src, dst, act } => {
+            let (s, d, len) = a.unary()?;
             let args = vec![
-                src,
-                dst,
-                Arg::U32(len as u32),
-                sat,
-                Arg::U32(from.desc()),
-                Arg::U32(to.desc()),
-                u32a(group)?,
-            ];
-            vec![launch("nb_convert", args, len / group)?]
-        }
-        OpSig::Pack { to } | OpSig::Unpack { from: to } => {
-            let len = len?;
-            let (from, to) = if matches!(sig, OpSig::Pack { .. }) {
-                (wide(to), to)
-            } else {
-                (to, wide(to))
-            };
-            let group = from.block().max(to.block());
-            let args = vec![
-                src,
-                dst,
-                Arg::U32(len as u32),
-                Arg::U32(from.desc()),
-                Arg::U32(to.desc()),
-                u32a(group)?,
-            ];
-            vec![launch("nb_int_convert", args, len / group)?]
-        }
-        OpSig::Quantize { to } => {
-            let len = len?;
-            let soff = to.scale_offset(len);
-            let mut v = Vec::new();
-            if to == Format::Nvfp4 {
-                let ts_off = soff + len / to.block();
-                v.push(launch(
-                    "nb_nvfp4_tensor_scale",
-                    vec![src, dst, Arg::U32(len as u32), u32a(ts_off)?],
-                    1,
-                )?);
-            }
-            let args = vec![
-                src,
-                dst,
-                Arg::U32(len as u32),
-                Arg::U32(to.desc()),
-                u32a(soff)?,
-            ];
-            v.push(launch("nb_quantize", args, len / to.block())?);
-            v
-        }
-        OpSig::Dequantize { from } => {
-            let len = len?;
-            let args = vec![
-                src,
-                dst,
-                Arg::U32(len as u32),
-                Arg::U32(from.desc()),
-                u32a(from.scale_offset(len))?,
-            ];
-            vec![launch("nb_dequantize", args, len / from.block())?]
-        }
-        OpSig::Gemm { a: fa, b: fb, acc } => {
-            let (m, n, k, batch) = (
-                u(a, 3)? as usize,
-                u(a, 4)? as usize,
-                u(a, 5)? as usize,
-                u(a, 6)? as usize,
-            );
-            let mut args = a.get(..9)?.to_vec();
-            args.extend([
-                Arg::U32(fa.desc()),
-                Arg::U32(fb.desc()),
-                Arg::U32(acc.desc()),
-                u32a(fa.scale_offset(batch * m * k))?,
-                u32a(fb.scale_offset(batch * n * k))?,
-            ]);
-            let sym = if acc == Format::I32 {
-                "nb_gemm_i"
-            } else {
-                "nb_gemm_f"
-            };
-            vec![launch(sym, args, batch * m * n)?]
-        }
-        OpSig::AbsmaxBlock { src: f } => {
-            let len = len?;
-            let block = u(a, 3)? as usize;
-            let args = vec![
-                src,
-                dst,
-                Arg::U32(len as u32),
-                Arg::U32(block as u32),
-                Arg::U32(f.desc()),
-                u32a(f.scale_offset(len))?,
-            ];
-            vec![launch("nb_absmax_block", args, len / block.max(1))?]
-        }
-        OpSig::Act {
-            src: fs,
-            dst: fd,
-            act,
-        } => {
-            let len = len?;
-            let args = vec![
-                src,
-                dst,
-                Arg::U32(len as u32),
+                s,
+                d,
+                Arg::U32(len),
                 Arg::U32(act.code()),
-                *a.get(3)?,
-                *a.get(4)?,
-                Arg::U32(fs.desc()),
-                Arg::U32(fd.desc()),
+                a.get(3)?,
+                a.get(4)?,
+                Arg::U32(src.desc()),
+                Arg::U32(dst.desc()),
             ];
-            vec![launch("nb_act", args, len)?]
+            Some(vec![launch("nb_act", args, len as usize)?])
         }
         OpSig::Conv2d { x, w, y, bias } => {
-            let outputs = u(a, 5)? as usize;
-            let mut args = a.get(..5)?.to_vec();
+            let outputs = a.usize(5)?;
+            let mut args = a.head(5)?;
             args.extend([
                 Arg::U32(x.desc()),
                 Arg::U32(w.desc()),
                 Arg::U32(y.desc()),
-                Arg::U32(bias as u32),
+                Arg::U32(u32::from(bias)),
             ]);
-            vec![launch("nb_conv2d", args, outputs)?]
+            Some(vec![launch("nb_conv2d", args, outputs)?])
         }
-        OpSig::Resize {
-            src: fs,
-            dst: fd,
-            mode,
-        } => {
-            let (planes, ho, wo) = (u(a, 2)? as usize, u(a, 5)? as usize, u(a, 6)? as usize);
-            let mut args = a.get(..7)?.to_vec();
+        OpSig::Resize { src, dst, mode } => {
+            let outputs = product(a.usize(2)?, a.usize(5)?, a.usize(6)?)?;
+            let mut args = a.head(7)?;
             args.extend([
                 Arg::U32(mode.code()),
-                Arg::U32(fs.desc()),
-                Arg::U32(fd.desc()),
+                Arg::U32(src.desc()),
+                Arg::U32(dst.desc()),
             ]);
-            vec![launch("nb_resize", args, planes * ho * wo)?]
+            Some(vec![launch("nb_resize", args, outputs)?])
         }
         #[allow(unreachable_patterns)]
-        _ => return None,
-    })
+        _ => None,
+    }
+}
+
+/// `nb_convert`: one work item per group of elements that share bytes.
+fn convert(a: Args<'_>, from: Format, to: Format) -> Option<Vec<Launch>> {
+    let (src, dst, len) = a.unary()?;
+    let group = from.block().max(to.block());
+    let saturate = Arg::U32(u32::from(a.u32(3)? == 0));
+    let args = vec![
+        src,
+        dst,
+        Arg::U32(len),
+        saturate,
+        Arg::U32(from.desc()),
+        Arg::U32(to.desc()),
+        u32_arg(group)?,
+    ];
+    Some(vec![launch("nb_convert", args, len as usize / group)?])
+}
+
+/// `nb_int_convert`: packing and unpacking sub-byte integers.
+fn int_convert(a: Args<'_>, from: Format, to: Format) -> Option<Vec<Launch>> {
+    let (src, dst, len) = a.unary()?;
+    let group = from.block().max(to.block());
+    let args = vec![
+        src,
+        dst,
+        Arg::U32(len),
+        Arg::U32(from.desc()),
+        Arg::U32(to.desc()),
+        u32_arg(group)?,
+    ];
+    Some(vec![launch("nb_int_convert", args, len as usize / group)?])
+}
+
+/// `nb_quantize`, after `nb_nvfp4_tensor_scale` for NVFP4's tensor scale.
+fn quantize(a: Args<'_>, to: Format) -> Option<Vec<Launch>> {
+    let (src, dst, len) = a.unary()?;
+    let n = len as usize;
+    let scales = to.scale_offset(n);
+    let mut launches = Vec::new();
+    if to == Format::Nvfp4 {
+        let tensor_scale = scales + n / to.block();
+        launches.push(launch(
+            "nb_nvfp4_tensor_scale",
+            vec![src, dst, Arg::U32(len), u32_arg(tensor_scale)?],
+            1,
+        )?);
+    }
+    let args = vec![
+        src,
+        dst,
+        Arg::U32(len),
+        Arg::U32(to.desc()),
+        u32_arg(scales)?,
+    ];
+    launches.push(launch("nb_quantize", args, n / to.block())?);
+    Some(launches)
+}
+
+/// `nb_dequantize`: one work item per block.
+fn dequantize(a: Args<'_>, from: Format) -> Option<Vec<Launch>> {
+    let (src, dst, len) = a.unary()?;
+    let n = len as usize;
+    let args = vec![
+        src,
+        dst,
+        Arg::U32(len),
+        Arg::U32(from.desc()),
+        u32_arg(from.scale_offset(n))?,
+    ];
+    Some(vec![launch("nb_dequantize", args, n / from.block())?])
+}
+
+/// `nb_gemm_f` / `nb_gemm_i`: one work item per output element.
+fn gemm(a: Args<'_>, fa: Format, fb: Format, acc: Format) -> Option<Vec<Launch>> {
+    let (m, n, k, batch) = (a.usize(3)?, a.usize(4)?, a.usize(5)?, a.usize(6)?);
+    let mut args = a.head(9)?;
+    args.extend([
+        Arg::U32(fa.desc()),
+        Arg::U32(fb.desc()),
+        Arg::U32(acc.desc()),
+        u32_arg(fa.scale_offset(product(batch, m, k)?))?,
+        u32_arg(fb.scale_offset(product(batch, n, k)?))?,
+    ]);
+    let symbol = if acc == Format::I32 {
+        "nb_gemm_i"
+    } else {
+        "nb_gemm_f"
+    };
+    Some(vec![launch(symbol, args, product(batch, m, n)?)?])
+}
+
+/// `nb_absmax_block`: one work item per block.
+fn absmax_block(a: Args<'_>, f: Format) -> Option<Vec<Launch>> {
+    let (src, dst, len) = a.unary()?;
+    let block = a.u32(3)?;
+    let n = len as usize;
+    let args = vec![
+        src,
+        dst,
+        Arg::U32(len),
+        Arg::U32(block),
+        Arg::U32(f.desc()),
+        u32_arg(f.scale_offset(n))?,
+    ];
+    Some(vec![launch(
+        "nb_absmax_block",
+        args,
+        n / (block as usize).max(1),
+    )?])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::BufId;
+
+    #[test]
+    fn oversized_shapes_are_bad_arguments_not_overflows() {
+        let sig = OpSig::Gemm {
+            a: Format::F32,
+            b: Format::F32,
+            acc: Format::F32,
+        };
+        let buf = |i| Arg::Buf(BufId(i));
+        let big = Arg::U32(u32::MAX);
+        let args = [
+            buf(0),
+            buf(1),
+            buf(2),
+            big,
+            big,
+            big,
+            big,
+            Arg::F32(1.0),
+            Arg::F32(0.0),
+        ];
+        assert!(matches!(lower(sig, &args), Err(Error::InvalidArgument(_))));
+        // A shape that fits lowers to one launch per output element.
+        let small = [
+            buf(0),
+            buf(1),
+            buf(2),
+            Arg::U32(2),
+            Arg::U32(3),
+            Arg::U32(4),
+            Arg::U32(5),
+        ];
+        let args = [&small[..], &[Arg::F32(1.0), Arg::F32(0.0)]].concat();
+        let launches = lower(sig, &args).expect("valid gemm");
+        assert_eq!(launches.len(), 1);
+        assert_eq!(
+            (launches[0].symbol, launches[0].items),
+            ("nb_gemm_f", 5 * 2 * 3)
+        );
+    }
 }

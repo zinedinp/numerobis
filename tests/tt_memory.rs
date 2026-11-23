@@ -4,19 +4,29 @@
 //! random patterns; then a round trip through the `Device` API.
 //!
 //! Skipped (with a note) when no card is present or its ARC heartbeat is
-//! dead. Only DRAM endpoints from the Blackhole SoC descriptor and the tile
+//! dead. Only DRAM endpoints from the Blackhole `SoC` descriptor and the tile
 //! from `NUMEROBIS_TT_CORE` (default 1,2) are touched; never probe others.
 //! All 8 channels are tested on p150 boards, channel 0 elsewhere.
 //!
 //! `NUMEROBIS_TT_MEM_MB=n` sets the bytes tested per DRAM region (default 1).
+
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names,
+    reason = "test data is built with bit-level casts; shapes are named as in the math"
+)]
 #![cfg(all(feature = "tt", target_os = "linux"))]
 
 use std::time::Instant;
 
 use numerobis::tt::card::{Card, Noc, arc_alive, card_type};
+use numerobis::{Choice, Overflow, elem::*, ops};
 
 const PATH: &str = "/dev/tenstorrent/0";
-/// First NoC 0 endpoint of each DRAM channel (blackhole_140_arch.yaml).
+/// First `NoC` 0 endpoint of each DRAM channel (`blackhole_140_arch.yaml`).
 const DRAM: [(u16, u16); 8] = [
     (0, 0),
     (0, 2),
@@ -68,7 +78,7 @@ fn check(noc: &mut Noc, what: &str, (x, y): (u16, u16), addr: u64, len: usize) -
             );
         }
     }
-    (3 * 2 * len) as f64 / t.elapsed().as_secs_f64() / (1 << 20) as f64
+    (3 * 2 * len) as f64 / t.elapsed().as_secs_f64() / f64::from(1 << 20)
 }
 
 fn core() -> (u16, u16) {
@@ -129,7 +139,6 @@ fn dram_l1_and_device_round_trip() {
 
     // Through the public API: DRAM buffer upload/download and one kernel that
     // moves data DRAM -> L1 -> DRAM on the core.
-    use numerobis::{Choice, Overflow, elem::*, ops};
     let dev = numerobis::tt::backend::open_all()
         .into_iter()
         .next()

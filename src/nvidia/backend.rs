@@ -10,7 +10,12 @@ use super::gpu::{Alloc, Gpu, Mem, cards};
 use super::program::{Kernel, Program};
 use super::qmd::{self, Qmd};
 use super::queue::{Engine as Ch, Queues};
-use super::sys::*;
+use super::sys::{
+    ADA_COMPUTE_A, AMPERE_COMPUTE_B, AMPERE_DMA_COPY_B, ARCH_AD100, ARCH_GA100,
+    NV2080_CTRL_MC_GET_ARCH_INFO_PARAMS, NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI,
+    NVC7C0_SEND_PCAS_A, NVC7C0_SEND_SIGNALING_PCAS2_B, PCAS_ACTION_INVALIDATE_SCHEDULE,
+    SUBC_COMPUTE, TESTED_DRIVERS,
+};
 use crate::engine::{Access, DeviceClass, Engine, FeatureSet};
 use crate::runtime::Device;
 use crate::runtime::abi::{Launch, lower};
@@ -79,6 +84,7 @@ fn driver_version() -> Option<String> {
 /// Tries to open every GPU the driver lists; errors are kept for diagnostics
 /// (`examples/probe.rs`). Unknown driver versions are refused unless
 /// `NUMEROBIS_NV_ANY_DRIVER=1` (the RM ABI changes between releases).
+#[must_use]
 pub fn probe() -> Vec<Result<Device>> {
     let Some(version) = driver_version() else {
         return Vec::new();
@@ -101,7 +107,9 @@ pub fn probe() -> Vec<Result<Device>> {
             // registration, channels and a kernel upload, and the GPU may also
             // drive the display.
             static OPEN: Mutex<Vec<(u32, Weak<NvBackend>)>> = Mutex::new(Vec::new());
-            let mut open = OPEN.lock().unwrap_or_else(|e| e.into_inner());
+            let mut open = OPEN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             open.retain(|(_, w)| w.strong_count() > 0);
             if let Some(b) = open
                 .iter()
@@ -123,6 +131,15 @@ pub fn open_all() -> Vec<Device> {
 }
 
 impl NvBackend {
+    /// Opens GPU `gpu_id` behind `/dev/nvidia<minor>` (driver `version`) and loads its Emulated
+    /// kernels.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Os`] when a device node or RM call fails,
+    /// [`Error::Unsupported`] for an architecture the raw path has no
+    /// kernels for, [`Error::BadBinary`] for kernels that do not load or
+    /// need more stack than reserved; errors while setting up the queues pass through.
     pub fn open(minor: u32, gpu_id: u32, version: &str) -> Result<NvBackend> {
         let gpu = Gpu::open(Fd::open("/dev/nvidiactl")?, minor, gpu_id)?;
         let (compute_class, image, tier) = select(&gpu.arch).ok_or_else(|| {
@@ -132,7 +149,7 @@ impl NvBackend {
             ))
         })?;
         let program = Program::parse(image)?;
-        if program.stack as u64 > SLM_PER_THREAD {
+        if u64::from(program.stack) > SLM_PER_THREAD {
             return Err(Error::BadBinary(format!(
                 "kernels need {} bytes of stack",
                 program.stack
@@ -142,10 +159,10 @@ impl NvBackend {
 
         let gr = gpu.gr;
         let per_tpc = ((SLM_PER_THREAD * 32).next_multiple_of(0x200)
-            * gr.max_warps_per_sm.max(1) as u64
-            * gr.sm_per_tpc.max(1) as u64)
-            .next_multiple_of(0x8000);
-        let local_size = (per_tpc * gr.tpc_per_gpc.max(1) as u64 * gr.gpcs.max(1) as u64)
+            * u64::from(gr.max_warps_per_sm.max(1))
+            * u64::from(gr.sm_per_tpc.max(1)))
+        .next_multiple_of(0x8000);
+        let local_size = (per_tpc * u64::from(gr.tpc_per_gpc.max(1)) * u64::from(gr.gpcs.max(1)))
             .next_multiple_of(0x20000);
         let local = gpu.alloc(local_size, Mem::Vram)?;
         q.init(
@@ -196,7 +213,9 @@ impl NvBackend {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Frees staging buffers whose work has finished.
@@ -231,14 +250,17 @@ impl NvBackend {
         q.set(qmd::INVALIDATE_SHADER_DATA_CACHE, 1);
         q.set(qmd::API_VISIBLE_CALL_LIMIT, 1);
         q.set(qmd::SAMPLER_INDEX, 1);
-        q.set(qmd::CWD_MEMBAR_TYPE, qmd::CWD_MEMBAR_L1_SYSMEMBAR as u64);
+        q.set(
+            qmd::CWD_MEMBAR_TYPE,
+            u64::from(qmd::CWD_MEMBAR_L1_SYSMEMBAR),
+        );
         q.set(qmd::QMD_MAJOR_VERSION, 3);
         q.set(qmd::QMD_VERSION, 0);
-        q.set(qmd::SHARED_MEMORY_SIZE, shared as u64);
-        q.set(qmd::MIN_SM_CONFIG_SHARED_MEM_SIZE, cfg as u64);
-        q.set(qmd::TARGET_SM_CONFIG_SHARED_MEM_SIZE, cfg as u64);
+        q.set(qmd::SHARED_MEMORY_SIZE, u64::from(shared));
+        q.set(qmd::MIN_SM_CONFIG_SHARED_MEM_SIZE, u64::from(cfg));
+        q.set(qmd::TARGET_SM_CONFIG_SHARED_MEM_SIZE, u64::from(cfg));
         q.set(qmd::MAX_SM_CONFIG_SHARED_MEM_SIZE, 0x1a);
-        q.set(qmd::REGISTER_COUNT_V, k.registers as u64);
+        q.set(qmd::REGISTER_COUNT_V, u64::from(k.registers));
         q.set(qmd::BARRIER_COUNT, 1);
         q.set(qmd::SHADER_LOCAL_MEMORY_HIGH_SIZE, SLM_PER_THREAD);
         q.set(qmd::PROGRAM_ADDRESS_LOWER, prog & 0xffff_ffff);
@@ -249,11 +271,11 @@ impl NvBackend {
         );
         q.set(qmd::PROGRAM_PREFETCH_ADDR_UPPER_SHIFTED, prog >> 40);
         q.set(qmd::PROGRAM_PREFETCH_SIZE, (k.text.1 >> 8).min(0x1ff));
-        q.set(qmd::SASS_VERSION, self.sass as u64);
-        q.set(qmd::CTA_RASTER_WIDTH, grid(items) as u64);
+        q.set(qmd::SASS_VERSION, u64::from(self.sass));
+        q.set(qmd::CTA_RASTER_WIDTH, u64::from(grid(items)));
         q.set(qmd::CTA_RASTER_HEIGHT, 1);
         q.set(qmd::CTA_RASTER_DEPTH, 1);
-        q.set(qmd::CTA_THREAD_DIMENSION0, BLOCK as u64);
+        q.set(qmd::CTA_THREAD_DIMENSION0, u64::from(BLOCK));
         q.set(qmd::CTA_THREAD_DIMENSION1, 1);
         q.set(qmd::CTA_THREAD_DIMENSION2, 1);
         q.constant_buffer(0, cbuf0, k.cbuf0_size);
@@ -281,7 +303,7 @@ impl NvBackend {
         }
         c[0x18..0x20].copy_from_slice(&SHARED_WINDOW.to_le_bytes());
         c[0x20..0x28].copy_from_slice(&LOCAL_WINDOW.to_le_bytes());
-        c[0x28..0x30].copy_from_slice(&0xfffdc0u64.to_le_bytes());
+        c[0x28..0x30].copy_from_slice(&0x00ff_fdc0_u64.to_le_bytes());
         for (a, &off) in l.args.iter().zip(&k.param_offsets) {
             let at = (k.params.0 + off) as usize;
             match *a {

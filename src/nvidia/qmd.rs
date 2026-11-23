@@ -1,4 +1,4 @@
-//! Queue Meta Data (compute launch descriptor), version 03_00 (Ampere/Ada,
+//! Queue Meta Data (compute launch descriptor), version `03_00` (Ampere/Ada,
 //! `AMPERE_COMPUTE_B` / `ADA_COMPUTE_A`). Field positions from NVIDIA
 //! `open-gpu-doc` `classes/compute/clc6c0qmd.h` (`NVC6C0_QMDV03_00_*`, `MW(hi:lo)`).
 
@@ -49,18 +49,22 @@ fields! {
 }
 
 /// `CONSTANT_BUFFER_VALID(i)`.
+#[must_use]
 pub const fn cb_valid(i: u32) -> (u32, u32) {
     (640 + i, 640 + i)
 }
 /// `CONSTANT_BUFFER_ADDR_LOWER(i)`.
+#[must_use]
 pub const fn cb_addr_lower(i: u32) -> (u32, u32) {
     (1055 + i * 64, 1024 + i * 64)
 }
 /// `CONSTANT_BUFFER_ADDR_UPPER(i)`.
+#[must_use]
 pub const fn cb_addr_upper(i: u32) -> (u32, u32) {
     (1072 + i * 64, 1056 + i * 64)
 }
 /// `CONSTANT_BUFFER_SIZE_SHIFTED4(i)`.
+#[must_use]
 pub const fn cb_size_shifted4(i: u32) -> (u32, u32) {
     (1087 + i * 64, 1075 + i * 64)
 }
@@ -76,6 +80,11 @@ impl Default for Qmd {
 
 impl Qmd {
     /// Sets bits `hi..=lo` (may span two words) to `v`.
+    ///
+    /// # Panics
+    ///
+    /// If `v` does not fit the field: a wrong field width is a bug in the
+    /// QMD layout, not a run-time condition.
     pub fn set(&mut self, (hi, lo): (u32, u32), v: u64) {
         let width = hi - lo + 1;
         assert!(
@@ -89,9 +98,10 @@ impl Qmd {
         }
     }
 
+    #[must_use]
     pub fn get(&self, (hi, lo): (u32, u32)) -> u64 {
-        (0..hi - lo + 1)
-            .map(|b| (((self.0[((lo + b) / 32) as usize] >> ((lo + b) % 32)) & 1) as u64) << b)
+        (0..=(hi - lo))
+            .map(|b| u64::from((self.0[((lo + b) / 32) as usize] >> ((lo + b) % 32)) & 1) << b)
             .sum()
     }
 
@@ -99,10 +109,11 @@ impl Qmd {
     pub fn constant_buffer(&mut self, i: u32, addr: u64, size: u32) {
         self.set(cb_addr_lower(i), addr & 0xffff_ffff);
         self.set(cb_addr_upper(i), addr >> 32);
-        self.set(cb_size_shifted4(i), size.div_ceil(16) as u64);
+        self.set(cb_size_shifted4(i), u64::from(size.div_ceil(16)));
         self.set(cb_valid(i), 1);
     }
 
+    #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.0.iter().flat_map(|w| w.to_le_bytes()).collect()
     }
@@ -126,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "overflow")]
     fn overflow_is_caught() {
         Qmd::default().set(QMD_VERSION, 16);
     }
