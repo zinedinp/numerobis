@@ -8,36 +8,47 @@
 //!
 //! - [`features`]: per core version its feature bits, the struct holding
 //!   them, and the extensions it promoted.
-//! - [`ops`]: the capabilities (draw, memory, shader, descriptor, sync,
+//! - [`caps`]: the [`Capability`]s (draw, memory, shader, descriptor, sync,
 //!   render), each with its [`Route`]s in fallback order.
+//! - [`Instance`]: what `vkCreateInstance` needs (portability enumeration,
+//!   `VK_KHR_get_physical_device_properties2` on a 1.0 loader).
 //! - [`Probe`] / [`Plan`]: the waterfall and its log.
 //!
 //! ```
-//! use numerobis::vulkan::{ApiVersion, Offer, Op, Probe, app_version};
+//! use numerobis::vulkan::{ApiVersion, Capability as Cap, Instance, Offer, Probe};
 //!
-//! // Before vkCreateInstance: what the loader reports, capped by what the
-//! // tables know.
-//! let app = app_version(Some(ApiVersion::V1_3), ApiVersion::NEWEST);
+//! // Before vkCreateInstance: what the loader reports (capped by what the
+//! // tables know) and its instance extensions.
+//! let instance = Instance::new(
+//!     Some(ApiVersion::V1_3),
+//!     ApiVersion::NEWEST,
+//!     [c"VK_KHR_portability_enumeration"],
+//! );
+//! // vkCreateInstance(apiVersion = instance.api.raw(), flags = instance.flags,
+//! //                  extensions = instance.extensions() + the host's own)
 //! // After picking the physical device: its version and extensions.
-//! let offer = Offer::new(app, ApiVersion::V1_1, [c"VK_KHR_draw_indirect_count"]);
-//! let mut probe = Probe::new(offer, &[Op::DrawIndirectCount, Op::BufferDeviceAddress]);
+//! let offer = Offer::new(instance.api, ApiVersion::V1_1, [c"VK_KHR_draw_indirect_count"])
+//!     .with_instance(instance.extensions().iter().copied());
+//! let mut probe = Probe::new(offer, &[Cap::DrawIndirectCount, Cap::BufferDeviceAddress]);
 //! let _query = probe.features2(); // hand to vkGetPhysicalDeviceFeatures2
 //! let plan = probe.plan();
-//! assert!(plan.has(Op::DrawIndirectCount)); // through the extension on 1.1
-//! assert!(!plan.has(Op::BufferDeviceAddress));
+//! assert!(plan.has(Cap::DrawIndirectCount)); // through the extension on 1.1
+//! let required = [Cap::DrawIndirectCount, Cap::BufferDeviceAddress];
+//! assert_eq!(plan.lacking(&required), [Cap::BufferDeviceAddress]);
 //! assert_eq!(plan.extensions(), [c"VK_KHR_draw_indirect_count"]);
 //! println!("{plan}");
 //! ```
 
+use std::ffi::CStr;
 use std::fmt;
 
+pub mod caps;
 pub mod features;
-pub mod ops;
 mod plan;
 
+pub use caps::{Area, Capability, Route};
 pub use features::Chain;
-pub use ops::{Area, Op, Route};
-pub use plan::{DeviceChain, Offer, Outcome, Plan, Probe, Skip, Verdict};
+pub use plan::{BitError, DeviceChain, FeatureQuery, Offer, Outcome, Plan, Probe, Skip, Verdict};
 
 /// A Vulkan version (`VK_MAKE_API_VERSION` without the variant).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -65,14 +76,19 @@ impl ApiVersion {
         }
     }
 
-    /// Unpacks a `uint32_t` version (bits 28-22 major, 21-12 minor, 11-0 patch).
+    /// Unpacks a `uint32_t` version (bits 31-29 variant, 28-22 major, 21-12
+    /// minor, 11-0 patch). `None` for a variant other than 0: Vulkan SC and
+    /// other variants are not Vulkan versions these tables describe.
     #[must_use]
-    pub const fn from_raw(raw: u32) -> Self {
-        Self {
+    pub const fn from_raw(raw: u32) -> Option<Self> {
+        if raw >> 29 != 0 {
+            return None;
+        }
+        Some(Self {
             major: (raw >> 22) & 0x7F,
             minor: (raw >> 12) & 0x3FF,
             patch: raw & 0xFFF,
-        }
+        })
     }
 
     /// Packs it for `VkApplicationInfo::apiVersion`.
@@ -104,6 +120,58 @@ pub fn app_version(loader: Option<ApiVersion>, ceiling: ApiVersion) -> ApiVersio
     match loader {
         Some(version) if version >= ApiVersion::V1_1 => ceiling,
         _ => ApiVersion::V1_0,
+    }
+}
+
+/// What `vkCreateInstance` needs for the waterfall to see every device and
+/// every route: the `apiVersion`, instance extensions and create flags. The
+/// host adds its own (surface, debug utils).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instance {
+    /// `VkApplicationInfo::apiVersion` ([`app_version`]).
+    pub api: ApiVersion,
+    /// `VkInstanceCreateInfo::flags`.
+    pub flags: u32,
+    extensions: Vec<&'static CStr>,
+}
+
+impl Instance {
+    /// `loader` as for [`app_version`]; `available` is what
+    /// `vkEnumerateInstanceExtensionProperties` lists.
+    ///
+    /// - On a 1.0 loader, `VK_KHR_get_physical_device_properties2`, which
+    ///   opens the feature structs ([`FeatureQuery::Features2Khr`]).
+    /// - `VK_KHR_portability_enumeration` with its create flag, without
+    ///   which a newer loader hides MoltenVK and other portability drivers.
+    pub fn new<'a>(
+        loader: Option<ApiVersion>,
+        ceiling: ApiVersion,
+        available: impl IntoIterator<Item = &'a CStr>,
+    ) -> Self {
+        let api = app_version(loader, ceiling);
+        let available: Vec<&CStr> = available.into_iter().collect();
+        let mut extensions = Vec::new();
+        let mut flags = 0;
+        if api < ApiVersion::V1_1 && available.contains(&features::GET_PHYSICAL_DEVICE_PROPERTIES2)
+        {
+            extensions.push(features::GET_PHYSICAL_DEVICE_PROPERTIES2);
+        }
+        if available.contains(&features::PORTABILITY_ENUMERATION) {
+            extensions.push(features::PORTABILITY_ENUMERATION);
+            flags |= features::ENUMERATE_PORTABILITY_BIT;
+        }
+        Self {
+            api,
+            flags,
+            extensions,
+        }
+    }
+
+    /// Instance extensions to enable; pass the same to
+    /// [`Offer::with_instance`].
+    #[must_use]
+    pub fn extensions(&self) -> &[&'static CStr] {
+        &self.extensions
     }
 }
 

@@ -23,7 +23,7 @@ and out are `Stream::upload` / `upload_packed` and `Stream::download`.
 | AMD GPU | `amd` | raw: KFD | gfx908 ... gfx12 | - | planned (HSACO kernels already built) |
 | NPUs | `accel`, `xdna` | raw: `accel` subsystem | Intel NPU, AMD XDNA, RK3588, Ethos-U | - | planned |
 | Raspberry Pi | `v3d` | raw: `v3d` | Pi 4/5 | - | planned |
-| Vulkan, CUDA, HIP | `vulkan`, `cuda`, `hip` | comfort (vendor or portable user space) | any | - | planned |
+| Vulkan, CUDA, HIP | `vulkan`, `cuda`, `hip` | comfort (vendor or portable user space) | any | - | planned the Vulkan feature waterfall for graphics hosts is done, see below) |(
 
 "Emulated" is the portable tier: formats are decoded with integer bit logic and
 the math runs in F32 with explicit FMA. It runs on every target. Native matrix
@@ -33,7 +33,7 @@ tiers (tensor cores, XMX, MFMA, Tensix FPU) are added per vendor on top of it.
 
 ```toml
 [dependencies]
-numerobis = { version = "0.2", features = ["nvidia", "tt"] }
+numerobis = { version = "0.4.0-beta", features = ["nvidia", "tt"] }
 ```
 
 | Feature | Enables |
@@ -41,10 +41,10 @@ numerobis = { version = "0.2", features = ["nvidia", "tt"] }
 | `nvidia` | raw NVIDIA backend (Linux, open kernel modules) |
 | `tt` | raw Tenstorrent backend (Linux, tt-kmd 2.x) |
 | `mock` | host reference backend (`Device::mock()`), for tests |
-| `intel`, `amd`, `xdna`, `v3d`, `accel`, `vulkan`, `cuda`, `hip` | reserved, no code yet |
+| `intel`, `amd`, `xdna`, `v3d`, `accel`, `vulkan`, `cuda`, `hip` | reserved, no code yet (`numerobis::vulkan` needs no feature) |
 
 Without any backend feature, `Device::all()` is empty and the crate still builds
-(type layer, ops API, ELF loader).
+(type layer, ops API, ELF loader, `pci`, `vulkan`).
 
 ## Feature detection
 
@@ -103,46 +103,66 @@ Every op takes a `Choice`:
 ## Vulkan feature waterfall (`numerobis::vulkan`)
 
 For a graphics host that wants the best Vulkan path the system allows, on
-every OS and without any backend feature. Like `pci` it is data plus logic:
-no Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
+every OS and without any backend feature (the `vulkan` Cargo feature is the
+planned compute backend, not this). Like `pci` it is data plus logic: no
+Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
 ...), and the structs it hands over are plain C layouts.
 
 - `vulkan::features`: per core version (1.0 to 1.4) its feature bits in
   declaration order, the struct that holds them, the extension each bit came
-  from, and the extensions the version promoted.
-- `vulkan::ops`: the capabilities, one module per area (`draw`, `memory`,
+  from, the extensions the version promoted, and which single struct a
+  version struct absorbed when. Generated from `vk.xml` (see below).
+- `vulkan::caps`: the `Capability`s, one module per area (`draw`, `memory`,
   `shader`, `descriptor`, `sync`, `render`). Each has its routes in fallback
   order: newest core version first, then the extensions that offered it
   before. Examples: `draw_indirect_count` is core 1.2 or
   `VK_KHR_draw_indirect_count`, `buffer_device_address` is core 1.2 or
   `VK_KHR_buffer_device_address`, `mesh_shader` is `VK_EXT_mesh_shader`
-  (with its 1.2 dependencies as extensions on 1.1).
+  (with its 1.2 dependencies as extensions on 1.1). A route naming a member
+  its struct doesn't have fails to compile.
+- `Instance`: what `vkCreateInstance` needs: the `apiVersion`,
+  `VK_KHR_portability_enumeration` and its flag (MoltenVK and other
+  portability drivers stay hidden without), and
+  `VK_KHR_get_physical_device_properties2` on a 1.0 loader.
 - `Probe` / `Plan`: the waterfall.
 
 ```rust
-use numerobis::vulkan::{ApiVersion, Offer, Op, Probe, app_version};
+use numerobis::vulkan::{ApiVersion, Capability as Cap, Chain, Instance, Offer, Probe};
 
-// 1. vkCreateInstance with this apiVersion (`None` when the loader has no
-//    vkEnumerateInstanceVersion: a 1.0 loader rejects anything above 1.0).
-let app = app_version(loader_version, ApiVersion::NEWEST);
+// 1. vkCreateInstance with instance.api.raw(), instance.flags and
+//    instance.extensions() plus the host's own. `loader_version` is `None`
+//    when the loader has no vkEnumerateInstanceVersion (1.0).
+let instance = Instance::new(loader_version, ApiVersion::NEWEST, instance_extension_names);
 // 2. The picked device: its apiVersion and vkEnumerateDeviceExtensionProperties.
-let offer = Offer::new(app, ApiVersion::from_raw(props.api_version), extension_names);
-let mut probe = Probe::new(offer, &[Op::DrawIndirectCount, Op::BufferDeviceAddress]);
-// 3. One feature query; `features2()` is a ready VkPhysicalDeviceFeatures2 chain.
+let device = ApiVersion::from_raw(props.api_version).expect("not Vulkan SC");
+let offer = Offer::new(instance.api, device, extension_names)
+    .with_instance(instance.extensions().iter().copied());
+let mut probe = Probe::new(offer, &[Cap::DynamicRendering, Cap::Synchronization2, Cap::MeshShader]);
+// 3. One feature query; `features2()` is a ready VkPhysicalDeviceFeatures2
+//    chain (`probe.query()` says which entry point). Subgroup capabilities
+//    also want `properties2()` through vkGetPhysicalDeviceProperties2.
 unsafe { get_physical_device_features2(physical, probe.features2().cast()) };
 let plan = probe.plan();
 log::info!("{plan}");
-// 4. vkCreateDevice: pNext = plan.device_chain().features2(), plus plan.extensions().
+assert!(plan.lacking(&[Cap::DynamicRendering, Cap::Synchronization2]).is_empty());
+// 4. vkCreateDevice: pNext = chain.features2(), plus plan.extensions().
+let mut chain = plan.device_chain();
+if plan.supported(Chain::Core10, "fillModeNonSolid") == Some(true) {
+    chain.enable(Chain::Core10, "fillModeNonSolid")?; // bits no capability covers
+}
 ```
 
 The device works at the lower of the instance's `apiVersion` and its own
 version. On that version the first available route decides; if its bit is
-off, the op is missing. Later routes would read the same hardware bit
-through another struct, and chaining a `VkPhysicalDeviceVulkan1xFeatures`
-together with a single struct it absorbed is invalid. `Plan::route` tells the
-host whether a core or an extension entry point applies (core
-`vkCmdDrawIndexedIndirectCount` vs. its `KHR` twin). The log has one line
-per op:
+off, the capability is missing. Later routes would read the same hardware
+bit through another struct, and chaining a `VkPhysicalDeviceVulkan1xFeatures`
+together with a single struct it absorbed is invalid. Bits the host adds go
+through `Probe::also_query` / `Plan::supported` / `DeviceChain::enable`,
+which move a single struct into its version struct for the same reason.
+`Plan::route` tells the host whether a core or an extension entry point
+applies (core `vkCmdDrawIndexedIndirectCount` vs. its `KHR` twin). A device
+that offers `VK_KHR_portability_subset` gets it enabled, and the log names
+what the subset leaves out. The log has one line per capability:
 
 ```text
 Vulkan 1.1 (instance asks 1.1, device has 1.3)
@@ -151,8 +171,20 @@ Vulkan 1.1 (instance asks 1.1, device has 1.3)
   extensions: VK_KHR_draw_indirect_count
 ```
 
-Field order and `sType` values are checked against the `vk.xml` layouts (ash
-1.3.281 for 1.0-1.3, the spec for `VkPhysicalDeviceVulkan14Features`).
+### Regenerating the tables
+
+`src/vulkan/features/generated.rs` comes from the Vulkan registry
+(`xml/vk.xml` of [Vulkan-Docs](https://github.com/KhronosGroup/Vulkan-Docs),
+or `registry/vk.xml` of Vulkan-Headers); its header records the version.
+To add a struct, list it in `CHAINS` in the script.
+
+```sh
+python scripts/gen-vulkan.py path/to/vk.xml          # write
+python scripts/gen-vulkan.py path/to/vk.xml --check  # fail if out of date
+```
+
+The script also fails on any `c"VK_..."` name under `src/vulkan` that the
+registry doesn't know.
 
 ## Usage
 
@@ -222,6 +254,8 @@ native matrix tiers will get per-tier tolerances.
   clang with amdgcn/nvptx/spirv64/riscv32 targets and lld, `ptxas`,
   optionally `spirv-val`. `scripts/build-kernels.sh` builds,
   `scripts/build-kernels.sh --check` verifies `kernels/bin` is up to date.
+- Regenerating the Vulkan tables (only when adding structs or versions):
+  Python 3, rustfmt and a `vk.xml` ([see above](#regenerating-the-tables)).
 
 ### Tenstorrent notes
 

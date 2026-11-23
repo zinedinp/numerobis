@@ -1,5 +1,5 @@
-//! The single capabilities a renderer asks for, one module per area, each
-//! with its waterfall of [`Route`]s: the newest core version first, then the
+//! The capabilities a renderer asks for, one module per area, each with its
+//! waterfall of [`Route`]s: the newest core version first, then the
 //! extensions that offered it before.
 
 use std::ffi::CStr;
@@ -14,7 +14,7 @@ pub mod render;
 pub mod shader;
 pub mod sync;
 
-/// One way to get an [`Op`].
+/// One way to get a [`Capability`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
     /// Core from `since`: the `fields` of `chain` must all be on.
@@ -41,7 +41,7 @@ pub enum Route {
     },
 }
 
-/// The area an op belongs to (its module).
+/// The area a capability belongs to (its module).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Area {
     Draw,
@@ -66,10 +66,9 @@ impl Area {
     }
 }
 
-/// What an op is and how to get it.
+/// What a capability is and how to get it.
 #[derive(Debug, Clone, Copy)]
 pub struct Spec {
-    pub op: Op,
     pub area: Area,
     /// Short snake-case name for logs (`draw_indirect_count`).
     pub name: &'static str,
@@ -79,121 +78,102 @@ pub struct Spec {
     pub routes: &'static [Route],
 }
 
-/// A capability a renderer can turn on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Op {
-    // Draw.
-    MultiDrawIndirect,
-    ShaderDrawParameters,
-    DrawIndirectCount,
-    IndexTypeUint8,
-    MeshShader,
-    // Memory.
-    RobustBufferAccess,
-    Storage16Bit,
-    Storage8Bit,
-    ScalarBlockLayout,
-    BufferDeviceAddress,
-    MemoryPriority,
-    PageableDeviceLocalMemory,
-    // Shader.
-    Int16,
-    Int64,
-    Float16,
-    Int8,
-    SubgroupVote,
-    SubgroupArithmetic,
-    SubgroupBallot,
-    SubgroupShuffle,
-    SubgroupSizeControl,
-    DemoteToHelperInvocation,
-    IntegerDotProduct,
-    // Descriptor.
-    BindlessTextures,
-    BindlessBuffers,
-    PushDescriptor,
-    // Sync.
-    TimelineSemaphore,
-    Synchronization2,
-    HostQueryReset,
-    PipelineStatistics,
-    // Render.
-    DynamicRendering,
-    SamplerFilterMinmax,
-    SamplerAnisotropy,
-    FifoLatestReady,
+/// One list makes the enum, [`Capability::ALL`] and [`Capability::spec`], so
+/// they can't drift apart.
+macro_rules! capabilities {
+    ($($cap:ident => $module:ident::$spec:ident,)*) => {
+        /// A capability a renderer can turn on.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
+        pub enum Capability {
+            $(#[doc = concat!("See [`", stringify!($module), "::", stringify!($spec), "`].")] $cap,)*
+        }
+
+        impl Capability {
+            /// Every capability, grouped by area.
+            pub const ALL: &[Capability] = &[$(Capability::$cap,)*];
+
+            /// Its name, doc and routes.
+            #[must_use]
+            pub const fn spec(self) -> &'static Spec {
+                match self {
+                    $(Capability::$cap => &$module::$spec,)*
+                }
+            }
+        }
+    };
 }
 
-impl Op {
-    /// Every op, grouped by area.
-    pub const ALL: &[Op] = &[
-        Op::MultiDrawIndirect,
-        Op::ShaderDrawParameters,
-        Op::DrawIndirectCount,
-        Op::IndexTypeUint8,
-        Op::MeshShader,
-        Op::RobustBufferAccess,
-        Op::Storage16Bit,
-        Op::Storage8Bit,
-        Op::ScalarBlockLayout,
-        Op::BufferDeviceAddress,
-        Op::MemoryPriority,
-        Op::PageableDeviceLocalMemory,
-        Op::Int16,
-        Op::Int64,
-        Op::Float16,
-        Op::Int8,
-        Op::SubgroupVote,
-        Op::SubgroupArithmetic,
-        Op::SubgroupBallot,
-        Op::SubgroupShuffle,
-        Op::SubgroupSizeControl,
-        Op::DemoteToHelperInvocation,
-        Op::IntegerDotProduct,
-        Op::BindlessTextures,
-        Op::BindlessBuffers,
-        Op::PushDescriptor,
-        Op::TimelineSemaphore,
-        Op::Synchronization2,
-        Op::HostQueryReset,
-        Op::PipelineStatistics,
-        Op::DynamicRendering,
-        Op::SamplerFilterMinmax,
-        Op::SamplerAnisotropy,
-        Op::FifoLatestReady,
-    ];
+capabilities! {
+    // Draw.
+    MultiDrawIndirect => draw::MULTI_DRAW_INDIRECT,
+    ShaderDrawParameters => draw::SHADER_DRAW_PARAMETERS,
+    DrawIndirectCount => draw::DRAW_INDIRECT_COUNT,
+    IndexTypeUint8 => draw::INDEX_TYPE_UINT8,
+    MeshShader => draw::MESH_SHADER,
+    // Memory.
+    RobustBufferAccess => memory::ROBUST_BUFFER_ACCESS,
+    Storage16Bit => memory::STORAGE_16BIT,
+    Storage8Bit => memory::STORAGE_8BIT,
+    ScalarBlockLayout => memory::SCALAR_BLOCK_LAYOUT,
+    BufferDeviceAddress => memory::BUFFER_DEVICE_ADDRESS,
+    MemoryPriority => memory::MEMORY_PRIORITY,
+    PageableDeviceLocalMemory => memory::PAGEABLE_DEVICE_LOCAL_MEMORY,
+    // Shader.
+    Int16 => shader::INT16,
+    Int64 => shader::INT64,
+    Float16 => shader::FLOAT16,
+    Int8 => shader::INT8,
+    SubgroupVote => shader::SUBGROUP_VOTE,
+    SubgroupArithmetic => shader::SUBGROUP_ARITHMETIC,
+    SubgroupBallot => shader::SUBGROUP_BALLOT,
+    SubgroupShuffle => shader::SUBGROUP_SHUFFLE,
+    SubgroupSizeControl => shader::SUBGROUP_SIZE_CONTROL,
+    DemoteToHelperInvocation => shader::DEMOTE_TO_HELPER_INVOCATION,
+    IntegerDotProduct => shader::INTEGER_DOT_PRODUCT,
+    // Descriptor.
+    BindlessTextures => descriptor::BINDLESS_TEXTURES,
+    BindlessBuffers => descriptor::BINDLESS_BUFFERS,
+    PushDescriptor => descriptor::PUSH_DESCRIPTOR,
+    // Sync.
+    TimelineSemaphore => sync::TIMELINE_SEMAPHORE,
+    Synchronization2 => sync::SYNCHRONIZATION2,
+    HostQueryReset => sync::HOST_QUERY_RESET,
+    PipelineStatistics => sync::PIPELINE_STATISTICS,
+    // Render.
+    DynamicRendering => render::DYNAMIC_RENDERING,
+    SamplerFilterMinmax => render::SAMPLER_FILTER_MINMAX,
+    SamplerAnisotropy => render::SAMPLER_ANISOTROPY,
+    FifoLatestReady => render::FIFO_LATEST_READY,
+}
 
-    /// Its name, doc and routes.
+impl Capability {
     #[must_use]
-    pub fn spec(self) -> &'static Spec {
-        [
-            draw::SPECS,
-            memory::SPECS,
-            shader::SPECS,
-            descriptor::SPECS,
-            sync::SPECS,
-            render::SPECS,
-        ]
-        .into_iter()
-        .flatten()
-        .find(|spec| spec.op == self)
-        .expect("every op has a spec")
-    }
-
-    #[must_use]
-    pub fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         self.spec().name
+    }
+}
+
+/// A route reads at least one bit, and only bits its struct has: checked
+/// while the tables compile.
+const fn check(chain: Chain, fields: &[&str]) {
+    assert!(
+        !fields.is_empty(),
+        "a route with a struct reads at least one bit"
+    );
+    let mut i = 0;
+    while i < fields.len() {
+        assert!(
+            chain.index(fields[i]).is_some(),
+            "a route field is not a member of its struct"
+        );
+        i += 1;
     }
 }
 
 /// A core-1.0 route: `fields` of `VkPhysicalDeviceFeatures`.
 pub(crate) const fn core10(fields: &'static [&'static str]) -> Route {
-    Route::Core {
-        since: ApiVersion::V1_0,
-        chain: Chain::Core10,
-        fields,
-    }
+    core(ApiVersion::V1_0, Chain::Core10, fields)
 }
 
 /// A core route of `chain` from `since`.
@@ -202,6 +182,7 @@ pub(crate) const fn core(
     chain: Chain,
     fields: &'static [&'static str],
 ) -> Route {
+    check(chain, fields);
     Route::Core {
         since,
         chain,
@@ -216,6 +197,13 @@ pub(crate) const fn ext(
     chain: Option<Chain>,
     fields: &'static [&'static str],
 ) -> Route {
+    match chain {
+        Some(chain) => check(chain, fields),
+        None => assert!(
+            fields.is_empty(),
+            "an extension without a struct reads no bits"
+        ),
+    }
     Route::Extension {
         name,
         deps,
