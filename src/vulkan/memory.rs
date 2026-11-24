@@ -2,9 +2,16 @@
 //! how much of it the CPU can map (all of it with resizable BAR or a large
 //! BAR, 256 MiB without), and the budget when `VK_EXT_memory_budget` is
 //! there. [`pci::bar`](crate::pci::bar) tells the same from the PCI side.
+//!
+//! Heaps and types never change while the program runs, so the
+//! [`Plan`](super::Plan)'s copy stays right. The budget does (other
+//! processes, the shared pool of an integrated GPU, eviction): read it again
+//! with a [`MemoryQuery`], or through a [`BudgetCache`] that reads only when
+//! its copy is older than a set age.
 
 use std::ffi::c_void;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use super::features::s_type;
 
@@ -71,14 +78,23 @@ const _: () = assert!(std::mem::offset_of!(RawMemoryProperties, heaps) == 264);
 const _: () = assert!(std::mem::offset_of!(RawMemoryProperties2, properties) == 16);
 const _: () = assert!(size_of::<RawBudget>() == 16 + 2 * 8 * MAX_HEAPS);
 
-/// The memory query a probe hands out, boxed so its chain stays put.
-pub(crate) struct MemoryQuery {
+/// A `VkPhysicalDeviceMemoryProperties2` with the budget struct behind it,
+/// to fill as often as needed (`vkGetPhysicalDeviceMemoryProperties2` is
+/// cheap). Boxed so the chain stays put while the driver writes.
+pub struct MemoryQuery {
     head: RawMemoryProperties2,
     budget: RawBudget,
 }
 
+// SAFETY: the only pointer, `head.p_next`, points into the same box or is
+// null; it is set again by every `properties2` call.
+unsafe impl Send for MemoryQuery {}
+// SAFETY: `&self` methods only read the plain-old-data fields.
+unsafe impl Sync for MemoryQuery {}
+
 impl MemoryQuery {
-    pub(crate) fn new() -> Box<Self> {
+    #[must_use]
+    pub fn new() -> Box<Self> {
         let zero = RawMemoryProperties {
             type_count: 0,
             types: [RawType { flags: 0, heap: 0 }; MAX_TYPES],
@@ -101,8 +117,11 @@ impl MemoryQuery {
     }
 
     /// `VkPhysicalDeviceMemoryProperties2*`, with the budget struct behind
-    /// it when the device offers `VK_EXT_memory_budget`.
-    pub(crate) fn properties2(&mut self, budget: bool) -> *mut c_void {
+    /// it when the device offers `VK_EXT_memory_budget`. Valid while `self`
+    /// is neither moved out of its box nor dropped; what an earlier fill
+    /// wrote is cleared, so [`read`](Self::read) only sees the next one.
+    pub fn properties2(&mut self, budget: bool) -> *mut c_void {
+        self.clear();
         self.head.p_next = if budget {
             std::ptr::from_mut(&mut self.budget).cast()
         } else {
@@ -111,13 +130,23 @@ impl MemoryQuery {
         std::ptr::from_mut(&mut self.head).cast()
     }
 
-    /// `VkPhysicalDeviceMemoryProperties*`, for the 1.0 entry point.
-    pub(crate) fn properties(&mut self) -> *mut c_void {
+    /// `VkPhysicalDeviceMemoryProperties*`, for the 1.0 entry point (no
+    /// budget).
+    pub fn properties(&mut self) -> *mut c_void {
+        self.clear();
         std::ptr::from_mut(&mut self.head.properties).cast()
     }
 
+    fn clear(&mut self) {
+        self.head.properties.heap_count = 0;
+        self.head.properties.type_count = 0;
+        self.budget.budget = [u64::MAX; MAX_HEAPS];
+        self.budget.usage = [u64::MAX; MAX_HEAPS];
+    }
+
     /// What the driver wrote, if it wrote anything.
-    pub(crate) fn read(&self) -> Option<Memory> {
+    #[must_use]
+    pub fn read(&self) -> Option<Memory> {
         let budget = (self.budget.budget[0] != u64::MAX).then_some(&self.budget);
         Memory::from_raw(&self.head.properties, budget)
     }
@@ -240,6 +269,20 @@ impl Memory {
         local.peek().is_some() && local.all(|t| t.has(flags::HOST_VISIBLE))
     }
 
+    /// What the process may still allocate in VRAM now: budget minus usage
+    /// of the [`vram`](Self::vram) heap. `None` without
+    /// `VK_EXT_memory_budget`. Only as fresh as the read; see
+    /// [`BudgetCache`].
+    #[must_use]
+    pub fn available_vram(&self) -> Option<u64> {
+        let heap = self
+            .heaps
+            .iter()
+            .filter(|h| h.device_local)
+            .max_by_key(|h| h.size)?;
+        Some(heap.budget?.saturating_sub(heap.usage?))
+    }
+
     /// Host memory the GPU can reach: the largest heap that is not device
     /// local.
     #[must_use]
@@ -250,6 +293,93 @@ impl Memory {
             .map(|h| h.size)
             .max()
             .unwrap_or(0)
+    }
+}
+
+/// The memory of one device, read again through the host's
+/// `vkGetPhysicalDeviceMemoryProperties2` once the copy is older than
+/// `max_age`. Per frame or before large allocations: the budget is the
+/// share the OS gives this process now, and it shrinks when others
+/// allocate (on an integrated GPU, everything else using the same RAM).
+///
+/// ```
+/// use std::time::Duration;
+/// use numerobis::vulkan::memory::BudgetCache;
+///
+/// let mut cache = BudgetCache::new(true, Duration::from_millis(500));
+/// // The host's call; here nothing is written, so there is nothing to read.
+/// let memory = cache.get(|_properties2| {
+///     // get_physical_device_memory_properties2(physical, _properties2.cast())
+/// });
+/// assert!(memory.is_none());
+/// ```
+pub struct BudgetCache {
+    query: Box<MemoryQuery>,
+    budget: bool,
+    max_age: Duration,
+    last: Option<(Instant, Memory)>,
+}
+
+impl BudgetCache {
+    /// `budget`: whether the device offers `VK_EXT_memory_budget`
+    /// ([`for_plan`](Self::for_plan) takes it from a plan).
+    #[must_use]
+    pub fn new(budget: bool, max_age: Duration) -> Self {
+        Self {
+            query: MemoryQuery::new(),
+            budget,
+            max_age,
+            last: None,
+        }
+    }
+
+    /// For the device `plan` was made for: with the budget when its probe
+    /// read one, starting from the plan's copy.
+    #[must_use]
+    pub fn for_plan(plan: &super::Plan, max_age: Duration) -> Self {
+        let memory = plan.memory();
+        let budget = memory.is_some_and(|m| m.heaps.iter().any(|h| h.budget.is_some()));
+        Self {
+            last: memory.map(|m| (Instant::now(), m.clone())),
+            ..Self::new(budget, max_age)
+        }
+    }
+
+    /// The copy, read again through `fill` when there is none or it is
+    /// older than `max_age`. `fill` gets the
+    /// `VkPhysicalDeviceMemoryProperties2*` to hand to
+    /// `vkGetPhysicalDeviceMemoryProperties2`. When it writes nothing, the
+    /// old copy is dropped and the result is `None`.
+    pub fn get(&mut self, fill: impl FnOnce(*mut c_void)) -> Option<&Memory> {
+        if self.age().is_none_or(|age| age > self.max_age) {
+            return self.refresh(fill);
+        }
+        self.cached()
+    }
+
+    /// Reads now, whatever the age.
+    pub fn refresh(&mut self, fill: impl FnOnce(*mut c_void)) -> Option<&Memory> {
+        fill(self.query.properties2(self.budget));
+        self.last = self.query.read().map(|m| (Instant::now(), m));
+        self.cached()
+    }
+
+    /// The copy as it is, however old.
+    #[must_use]
+    pub fn cached(&self) -> Option<&Memory> {
+        self.last.as_ref().map(|(_, m)| m)
+    }
+
+    /// How old the copy is.
+    #[must_use]
+    pub fn age(&self) -> Option<Duration> {
+        self.last.as_ref().map(|(at, _)| at.elapsed())
+    }
+
+    /// The next [`get`](Self::get) reads again (after a large allocation or
+    /// free of its own).
+    pub fn invalidate(&mut self) {
+        self.last = None;
     }
 }
 
@@ -396,6 +526,75 @@ mod tests {
                 .cast::<RawMemoryProperties2>()
                 .is_aligned()
         );
+    }
+
+    /// Writes one VRAM heap with `budget` and `usage`, as a driver would.
+    fn fill(p: *mut c_void, budget: u64, usage: u64) {
+        // SAFETY: `p` is a query's properties2 with the budget chained.
+        unsafe {
+            let p = p.cast::<RawMemoryProperties2>();
+            (*p).properties.heap_count = 1;
+            (*p).properties.heaps[0] = RawHeap {
+                size: 8 << 30,
+                flags: HEAP_DEVICE_LOCAL,
+            };
+            (*p).properties.type_count = 1;
+            (*p).properties.types[0] = RawType { flags: DL, heap: 0 };
+            let b = (*p).p_next.cast::<RawBudget>();
+            (*b).budget[0] = budget;
+            (*b).usage[0] = usage;
+        }
+    }
+
+    #[test]
+    fn a_query_can_be_filled_again_and_forgets_the_old_fill() {
+        let mut q = MemoryQuery::new();
+        fill(q.properties2(true), 7 << 30, 1 << 30);
+        assert_eq!(q.read().unwrap().available_vram(), Some(6 << 30));
+        fill(q.properties2(true), 7 << 30, 3 << 30);
+        assert_eq!(q.read().unwrap().available_vram(), Some(4 << 30));
+        // A call that writes nothing reads as nothing, not as the last fill.
+        let _ = q.properties2(true);
+        assert!(q.read().is_none());
+        let _ = q.properties();
+        assert!(q.read().is_none());
+    }
+
+    #[test]
+    fn the_budget_cache_reads_only_when_its_copy_is_too_old() {
+        let mut calls = 0;
+        let mut get = |cache: &mut BudgetCache, usage| {
+            cache
+                .get(|p| {
+                    calls += 1;
+                    fill(p, 7 << 30, usage);
+                })
+                .and_then(Memory::available_vram)
+        };
+        let mut cache = BudgetCache::new(true, Duration::from_secs(3600));
+        assert_eq!(get(&mut cache, 1 << 30), Some(6 << 30));
+        // Fresh enough: the second fill isn't asked for.
+        assert_eq!(get(&mut cache, 5 << 30), Some(6 << 30));
+        cache.invalidate();
+        assert_eq!(get(&mut cache, 5 << 30), Some(2 << 30));
+        // Too old: every get reads.
+        let mut stale = BudgetCache::new(true, Duration::ZERO);
+        assert_eq!(get(&mut stale, 1 << 30), Some(6 << 30));
+        std::thread::sleep(Duration::from_millis(2));
+        assert_eq!(get(&mut stale, 3 << 30), Some(4 << 30));
+        assert_eq!(calls, 4);
+        assert!(stale.age().is_some());
+        assert!(
+            stale.refresh(|_| ()).is_none(),
+            "a fill that writes nothing drops the copy"
+        );
+        assert!(stale.cached().is_none());
+    }
+
+    #[test]
+    fn available_vram_needs_the_budget() {
+        let plain = memory(&[(8 << 30, true)], &[(DL, 0)]);
+        assert_eq!(plain.available_vram(), None);
     }
 
     #[test]

@@ -123,6 +123,14 @@ impl DeviceInfo {
         Gpu::from_pci(self.vendor_id, self.device_id)
     }
 
+    /// The same card on the PCI side (BARs, link, resizable BAR), from the
+    /// cached [`pci::bar::scan`]: by the PCI address when the device told
+    /// it, else by the ids.
+    #[must_use]
+    pub fn bar(&self) -> Option<&'static pci::bar::Gpu> {
+        pci::bar::find(self.vendor_id, self.device_id, self.pci)
+    }
+
     /// The driver version as the vendor counts it on `os`.
     #[must_use]
     pub fn driver(&self, os: Os) -> DriverVersion {

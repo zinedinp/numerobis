@@ -184,6 +184,8 @@ capabilities! {
     HostQueryReset => sync::HOST_QUERY_RESET,
     PipelineStatistics => sync::PIPELINE_STATISTICS,
     CalibratedTimestamps => sync::CALIBRATED_TIMESTAMPS,
+    GlobalPriority => sync::GLOBAL_PRIORITY,
+    GlobalPriorityQuery => sync::GLOBAL_PRIORITY_QUERY,
     // Render.
     DynamicRendering => render::DYNAMIC_RENDERING,
     SamplerFilterMinmax => render::SAMPLER_FILTER_MINMAX,

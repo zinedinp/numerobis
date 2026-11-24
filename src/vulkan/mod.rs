@@ -13,6 +13,10 @@
 //! - [`Instance`]: what `vkCreateInstance` needs (portability enumeration,
 //!   `VK_KHR_get_physical_device_properties2` on a 1.0 loader).
 //! - [`Probe`] / [`Plan`]: the waterfall and its log.
+//! - [`cache`]: the plans kept for the process after one probe at startup;
+//!   [`BudgetCache`] reads the memory budget again when it is too old.
+//! - [`priority`]: queue global priority at `vkCreateDevice`, with the
+//!   fallback when the driver refuses a level.
 //!
 //! ```
 //! use numerobis::vulkan::{ApiVersion, Capability as Cap, Instance, Offer, Probe};
@@ -42,18 +46,21 @@
 use std::ffi::CStr;
 use std::fmt;
 
+pub mod cache;
 pub mod caps;
 pub mod device;
 pub mod features;
 pub mod memory;
 mod plan;
+pub mod priority;
 
 pub use crate::platform::{Os, Status, Support};
 pub use caps::{Area, Capability, Route};
 pub use device::{DeviceInfo, DeviceType, Quirk, rank};
 pub use features::Chain;
-pub use memory::Memory;
+pub use memory::{BudgetCache, Memory, MemoryQuery};
 pub use plan::{BitError, DeviceChain, FeatureQuery, Offer, Outcome, Plan, Probe, Skip, Verdict};
+pub use priority::GlobalPriority;
 
 /// A Vulkan version (`VK_MAKE_API_VERSION` without the variant).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

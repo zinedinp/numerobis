@@ -108,6 +108,8 @@ pub enum Chain {
     PresentWait,
     /// `VkPhysicalDevicePresentWait2FeaturesKHR` (`VK_KHR_present_wait2`).
     PresentWait2,
+    /// `VkPhysicalDeviceGlobalPriorityQueryFeatures`: core 1.4, before that `VK_KHR_global_priority`, `VK_EXT_global_priority_query`; part of `Vulkan14` from 1.4.
+    GlobalPriorityQuery,
 }
 
 impl Chain {
@@ -162,6 +164,7 @@ impl Chain {
         Self::PresentId2,
         Self::PresentWait,
         Self::PresentWait2,
+        Self::GlobalPriorityQuery,
     ];
 
     /// The struct's `VkStructureType` value.
@@ -217,6 +220,7 @@ impl Chain {
             Self::PresentId2 => 1_000_479_002,
             Self::PresentWait => 1_000_248_000,
             Self::PresentWait2 => 1_000_480_001,
+            Self::GlobalPriorityQuery => 1_000_388_000,
         }
     }
 
@@ -277,6 +281,7 @@ impl Chain {
             Self::PresentId2 => "VkPhysicalDevicePresentId2FeaturesKHR",
             Self::PresentWait => "VkPhysicalDevicePresentWaitFeaturesKHR",
             Self::PresentWait2 => "VkPhysicalDevicePresentWait2FeaturesKHR",
+            Self::GlobalPriorityQuery => "VkPhysicalDeviceGlobalPriorityQueryFeatures",
         }
     }
 
@@ -333,6 +338,7 @@ impl Chain {
             Self::PresentId2 => PRESENT_ID2_FIELDS,
             Self::PresentWait => PRESENT_WAIT_FIELDS,
             Self::PresentWait2 => PRESENT_WAIT2_FIELDS,
+            Self::GlobalPriorityQuery => GLOBAL_PRIORITY_QUERY_FIELDS,
         }
     }
 
@@ -380,7 +386,8 @@ impl Chain {
             | Self::Maintenance5
             | Self::Maintenance6
             | Self::HostImageCopy
-            | Self::VertexAttributeDivisor => Some((ApiVersion::V1_4, Self::Vulkan14)),
+            | Self::VertexAttributeDivisor
+            | Self::GlobalPriorityQuery => Some((ApiVersion::V1_4, Self::Vulkan14)),
             _ => None,
         }
     }
@@ -890,6 +897,8 @@ const PRESENT_WAIT_FIELDS: &[Field] = &[f("presentWait")];
 
 const PRESENT_WAIT2_FIELDS: &[Field] = &[f("presentWait2")];
 
+const GLOBAL_PRIORITY_QUERY_FIELDS: &[Field] = &[f("globalPriorityQuery")];
+
 /// The extensions Vulkan 1.1 made core.
 const PROMOTED_1_1: &[&CStr] = &[
     c"VK_KHR_16bit_storage",
@@ -1050,6 +1059,17 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     (
         c"VK_EXT_external_memory_dma_buf",
         Depends::Extension(c"VK_KHR_external_memory_fd"),
+    ),
+    (c"VK_EXT_global_priority", Depends::All(&[])),
+    (
+        c"VK_EXT_global_priority_query",
+        Depends::All(&[
+            Depends::Extension(c"VK_EXT_global_priority"),
+            Depends::Any(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Version(ApiVersion::V1_1),
+            ]),
+        ]),
     ),
     (
         c"VK_EXT_graphics_pipeline_library",
@@ -1373,6 +1393,13 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
         c"VK_KHR_get_surface_capabilities2",
         Depends::Extension(c"VK_KHR_surface"),
     ),
+    (
+        c"VK_KHR_global_priority",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
     (c"VK_KHR_image_format_list", Depends::All(&[])),
     (
         c"VK_KHR_index_type_uint8",
@@ -1551,7 +1578,7 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     ),
 ];
 
-/// `sType` values of the property structs the probe reads.
+/// `sType` values of the property, query and create-info structs.
 pub(crate) mod s_type {
     /// `VkPhysicalDeviceProperties2`.
     pub const PROPERTIES_2: i32 = 1_000_059_001;
@@ -1565,6 +1592,12 @@ pub(crate) mod s_type {
     pub const MEMORY_PROPERTIES_2: i32 = 1_000_059_006;
     /// `VkPhysicalDeviceMemoryBudgetPropertiesEXT`.
     pub const MEMORY_BUDGET_PROPERTIES: i32 = 1_000_237_000;
+    /// `VkQueueFamilyProperties2`.
+    pub const QUEUE_FAMILY_PROPERTIES_2: i32 = 1_000_059_005;
+    /// `VkQueueFamilyGlobalPriorityProperties`.
+    pub const QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES: i32 = 1_000_388_001;
+    /// `VkDeviceQueueGlobalPriorityCreateInfo`.
+    pub const DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO: i32 = 1_000_174_000;
 }
 
 /// Every instance extension: enabled at `vkCreateInstance`, never at

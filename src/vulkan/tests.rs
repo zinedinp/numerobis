@@ -41,7 +41,7 @@ unsafe fn walk(head: *mut c_void, mut visit: impl FnMut(Chain, *mut u32)) {
 }
 
 /// A driver that supports `bits` (struct, member) and nothing else.
-fn fill(probe: &mut Probe, bits: &[(Chain, &str)]) -> Vec<Chain> {
+pub(super) fn fill(probe: &mut Probe, bits: &[(Chain, &str)]) -> Vec<Chain> {
     let mut seen = Vec::new();
     // SAFETY: the probe owns the chain until it is used again.
     unsafe {
@@ -1116,6 +1116,37 @@ fn device_and_memory_flow_into_the_plan_and_the_ranking() {
     };
     let plan = Probe::new(Offer::new(V::V1_3, V::V1_3, []).with_device(named), &[]).plan();
     assert_eq!(plan.device_info().map(|d| d.name.as_str()), Some("given"));
+}
+
+/// The only test that touches the process-wide cache.
+#[test]
+fn the_cache_keeps_the_first_plans_and_ranks_over_them() {
+    let caps = [Capability::DynamicRendering];
+    let mut granted = Probe::new(Offer::new(V::V1_3, V::V1_3, []), &caps);
+    fill(&mut granted, &[(Chain::Vulkan13, "dynamicRendering")]);
+    let plans = vec![
+        Probe::new(Offer::new(V::V1_3, V::V1_3, []), &caps).plan(),
+        granted.plan(),
+    ];
+    let mut ran = 0;
+    let kept = super::cache::get_or_init(|| {
+        ran += 1;
+        plans
+    });
+    assert_eq!(kept.len(), 2);
+    // Kept: init doesn't run again, publish hands its plans back.
+    assert!(std::ptr::eq(super::cache::get_or_init(Vec::new), kept));
+    assert_eq!(ran, 1);
+    assert!(super::cache::publish(Vec::new()).is_err());
+    assert!(std::ptr::eq(super::cache::plans(), kept));
+    assert_eq!(super::cache::best(&caps).map(|(i, _)| i), Some(1));
+    assert_eq!(
+        super::cache::best(&[Capability::MeshShader]).map(|(i, _)| i),
+        None
+    );
+    // The budget cache starts from the plan's copy; no budget was read.
+    let budget = super::BudgetCache::for_plan(&kept[1], std::time::Duration::from_secs(1));
+    assert!(budget.cached().is_none());
 }
 
 #[test]

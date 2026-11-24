@@ -1,6 +1,6 @@
-//! Synchronisation and queries.
+//! Synchronisation, queries and queue priority.
 
-use super::{Area, Spec, Support, core, core10, ext};
+use super::{Area, Capability, Spec, Support, core, core10, ext, version};
 use crate::vulkan::ApiVersion as V;
 use crate::vulkan::features::Chain;
 
@@ -72,5 +72,39 @@ pub const CALIBRATED_TIMESTAMPS: Spec = Spec {
     routes: &[
         ext(c"VK_KHR_calibrated_timestamps", None, &[]),
         ext(c"VK_EXT_calibrated_timestamps", None, &[]),
+    ],
+};
+
+pub const GLOBAL_PRIORITY: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[],
+    name: "global_priority",
+    doc: "a queue's priority against other processes on the GPU (low to realtime)",
+    routes: &[
+        version(V::V1_4),
+        ext(c"VK_KHR_global_priority", None, &[]),
+        ext(c"VK_EXT_global_priority", None, &[]),
+    ],
+};
+
+pub const GLOBAL_PRIORITY_QUERY: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[Capability::GlobalPriority],
+    name: "global_priority_query",
+    doc: "which priorities each queue family allows (VkQueueFamilyGlobalPriorityProperties)",
+    routes: &[
+        core(V::V1_4, Chain::Vulkan14, &["globalPriorityQuery"]),
+        ext(
+            c"VK_KHR_global_priority",
+            Some(Chain::GlobalPriorityQuery),
+            &["globalPriorityQuery"],
+        ),
+        ext(
+            c"VK_EXT_global_priority_query",
+            Some(Chain::GlobalPriorityQuery),
+            &["globalPriorityQuery"],
+        ),
     ],
 };

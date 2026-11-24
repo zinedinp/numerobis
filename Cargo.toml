@@ -1,6 +1,6 @@
 [package]
 name = "numerobis"
-version = "0.4.2-beta"
+version = "0.4.3-beta"
 authors = ["Zinedin Polic"]
 edition = "2024"
 rust-version = "1.100.0"

@@ -17,6 +17,7 @@
 
 use std::fmt;
 use std::io;
+use std::sync::OnceLock;
 
 use super::PciAddress;
 use crate::platform::{Status, Support};
@@ -290,13 +291,56 @@ impl fmt::Display for Gpu {
     }
 }
 
-/// Every display-class PCI device (base class 0x03), by address.
+static SCANNED: OnceLock<Vec<Gpu>> = OnceLock::new();
+
+/// Every display-class PCI device (base class 0x03), by address. Read from
+/// the OS on the first call and kept for the process (like miraculix's
+/// `detect_features`): BARs and links only change with a reboot, a firmware
+/// setting or a hot plug. A failed read isn't kept, the next call tries
+/// again. [`scan_fresh`] always reads; [`warm_up`] fills it at startup.
+///
+/// # Errors
+///
+/// As [`scan_fresh`].
+pub fn scan() -> io::Result<&'static [Gpu]> {
+    if let Some(gpus) = SCANNED.get() {
+        return Ok(gpus);
+    }
+    let gpus = scan_fresh()?;
+    Ok(SCANNED.get_or_init(|| gpus))
+}
+
+/// Optional: [`scan`] at startup, so the first use later doesn't pay for
+/// it. An error is left for that use to see.
+pub fn warm_up() {
+    let _ = scan();
+}
+
+/// The scanned device at `address`, or else the first one with these PCI
+/// ids (two identical cards without an address are told apart by order
+/// only). [`DeviceInfo::bar`](crate::vulkan::DeviceInfo::bar) asks with a
+/// Vulkan device's ids.
+#[must_use]
+pub fn find(vendor: u32, device: u32, address: Option<PciAddress>) -> Option<&'static Gpu> {
+    find_in(scan().ok()?, vendor, device, address)
+}
+
+fn find_in(gpus: &[Gpu], vendor: u32, device: u32, address: Option<PciAddress>) -> Option<&Gpu> {
+    address
+        .and_then(|a| gpus.iter().find(|g| g.address == Some(a)))
+        .or_else(|| {
+            gpus.iter()
+                .find(|g| g.ids.vendor.id() == vendor && g.ids.device == device)
+        })
+}
+
+/// What the OS reports now, without the cache.
 ///
 /// # Errors
 ///
 /// When the OS's device list can't be read (sysfs missing, configuration
 /// manager failing); [`io::ErrorKind::Unsupported`] on other systems.
-pub fn scan() -> io::Result<Vec<Gpu>> {
+pub fn scan_fresh() -> io::Result<Vec<Gpu>> {
     #[cfg(target_os = "linux")]
     return linux::scan();
     #[cfg(windows)]
@@ -966,6 +1010,34 @@ mod tests {
             ),
             "{shown}"
         );
+    }
+
+    #[test]
+    fn find_prefers_the_address_then_the_ids() {
+        let first = gpu(vec![], Some(12 << 30));
+        let second = Gpu {
+            address: "0000:04:00.0".parse().ok(),
+            ..gpu(vec![], Some(10 << 30))
+        };
+        let gpus = [first, second];
+        let at = |a: &str| find_in(&gpus, 0x8086, 0xE20B, a.parse().ok()).and_then(|g| g.vram);
+        assert_eq!(at("0000:04:00.0"), Some(10 << 30));
+        // No address, or one not listed: the first with the ids.
+        assert_eq!(at(""), Some(12 << 30));
+        assert_eq!(at("0000:09:00.0"), Some(12 << 30));
+        assert!(find_in(&gpus, 0x10DE, 0x2206, None).is_none());
+    }
+
+    #[test]
+    fn the_scan_is_read_once_and_kept() {
+        // Where the OS can't be read (CI, other systems) there is nothing to
+        // keep; the error isn't cached either.
+        if let Ok(first) = scan() {
+            warm_up();
+            assert!(std::ptr::eq(first, scan().unwrap()));
+        } else {
+            assert!(scan().is_err());
+        }
     }
 
     #[cfg(windows)]

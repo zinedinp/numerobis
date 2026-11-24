@@ -79,9 +79,10 @@ CHAINS = [
     ("PresentId2", "VkPhysicalDevicePresentId2FeaturesKHR"),
     ("PresentWait", "VkPhysicalDevicePresentWaitFeaturesKHR"),
     ("PresentWait2", "VkPhysicalDevicePresentWait2FeaturesKHR"),
+    ("GlobalPriorityQuery", "VkPhysicalDeviceGlobalPriorityQueryFeatures"),
 ]
 
-# Property and query structs the probe reads: their sType values.
+# Property, query and create-info structs numerobis fills: their sType values.
 PROPERTIES = [
     ("PROPERTIES_2", "VkPhysicalDeviceProperties2"),
     ("SUBGROUP_PROPERTIES", "VkPhysicalDeviceSubgroupProperties"),
@@ -89,6 +90,9 @@ PROPERTIES = [
     ("PCI_BUS_INFO_PROPERTIES", "VkPhysicalDevicePCIBusInfoPropertiesEXT"),
     ("MEMORY_PROPERTIES_2", "VkPhysicalDeviceMemoryProperties2"),
     ("MEMORY_BUDGET_PROPERTIES", "VkPhysicalDeviceMemoryBudgetPropertiesEXT"),
+    ("QUEUE_FAMILY_PROPERTIES_2", "VkQueueFamilyProperties2"),
+    ("QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES", "VkQueueFamilyGlobalPriorityProperties"),
+    ("DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO", "VkDeviceQueueGlobalPriorityCreateInfo"),
 ]
 
 # Core bits whose extension had no feature struct (being offered was
@@ -526,7 +530,7 @@ def generate(reg, used):
         w(f'    (c"{name}", {depends_rust(parse_depends(dep)) if dep else "Depends::All(&[])"}),')
     w("];")
     w("")
-    w("/// `sType` values of the property structs the probe reads.")
+    w("/// `sType` values of the property, query and create-info structs.")
     w("pub(crate) mod s_type {")
     for const, struct in PROPERTIES:
         w(f"    /// `{struct}`.")

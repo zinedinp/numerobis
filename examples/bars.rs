@@ -10,7 +10,7 @@ fn main() {
         numerobis::pci::bar::SUPPORT
     );
     match numerobis::pci::bar::scan() {
-        Ok(gpus) if gpus.is_empty() => println!("no display-class PCI devices"),
+        Ok([]) => println!("no display-class PCI devices"),
         Ok(gpus) => {
             for gpu in gpus {
                 println!("{gpu}");

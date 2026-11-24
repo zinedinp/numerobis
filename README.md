@@ -113,10 +113,11 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   from, the extensions the version promoted, which single struct a version
   struct absorbed when, and every extension's `depends` expression. Generated
   from `vk.xml` (see below).
-- `vulkan::caps`: 72 `Capability`s, one module per area: `draw`, `memory`,
+- `vulkan::caps`: 74 `Capability`s, one module per area: `draw`, `memory`,
   `shader`, `compute` (cooperative matrix, bfloat16, float8, memory model),
   `descriptor`, `pipeline` (dynamic state, pipeline libraries, shader
-  objects, maintenance4-6), `sync`, `render` (texture compression, debug
+  objects, maintenance4-6), `sync` (timelines, queries, queue priority),
+  `render` (texture compression, debug
   raster), `present` (present id/wait), `interop` (fd, dma-buf and DRM
   modifiers on Linux; Win32 handles on Windows). Each has its routes in
   fallback order: newest core version first, then the extensions that
@@ -132,6 +133,17 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   identity (tied to `pci`: vendor, architecture, driver version), driver
   `Quirk`s and `rank` to pick among several devices; `vulkan::memory` the
   heaps, VRAM and how much of it the CPU can map.
+- `vulkan::cache`: the plans kept for the process, like miraculix's
+  `detect_features`: probe once at startup, ask `cache::plans()` /
+  `cache::best()` anywhere later. `BudgetCache` reads the memory budget
+  again once its copy is older than a set age (the one value that changes
+  while the program runs).
+- `vulkan::priority`: queue global priority (low, medium, high, realtime)
+  for `vkCreateDevice`: the levels to try in order (only those the queue
+  family allows when `global_priority_query` is granted), and
+  `create_with_fallback`, which steps down on `VK_ERROR_NOT_PERMITTED`.
+  It ranks this process's GPU queues against other processes on the same
+  GPU; an NPU or another GPU has its own scheduler and doesn't see it.
 
 ```rust
 use numerobis::vulkan::{ApiVersion, Capability as Cap, Chain, Instance, Offer, Probe, rank};
@@ -157,6 +169,20 @@ let plan = probe.plan();
 log::info!("{plan}");
 // 4. With several devices: the best one that has everything required.
 let best = rank(&plans, &[Cap::DynamicRendering, Cap::Synchronization2]).first().copied();
+//    Or keep them for the process and ask later, without probing again:
+let plans = numerobis::vulkan::cache::get_or_init(|| plans);
+let (index, plan) = numerobis::vulkan::cache::best(&[Cap::DynamicRendering]).expect("a GPU");
+//    Queue priority: the best level the driver allows, stepping down when refused.
+let order = priority::candidates(plan, GlobalPriority::High, family.priorities.as_deref());
+let (device, got) = priority::create_with_fallback(&order, |p| {
+    // VkDeviceQueueCreateInfo.pNext = p.map(GlobalPriority::create_info).as_ptr()
+    create_device(p)
+})?;
+//    The budget, fresh at most 100 ms old (per frame, before big allocations):
+let mut budget = BudgetCache::for_plan(plan, Duration::from_millis(100));
+let free = budget
+    .get(|p| unsafe { get_physical_device_memory_properties2(physical, p.cast()) })
+    .and_then(Memory::available_vram);
 // 5. vkCreateDevice: pNext = chain.features2(), plus plan.extensions().
 let mut chain = plan.device_chain();
 if plan.supported(Chain::Core10, "fillModeNonSolid") == Some(true) {
@@ -194,8 +220,10 @@ Vulkan 1.4 (instance asks 1.4, device has 1.4.359)
 
 `cargo run --example vulkan_probe` runs all of it against the installed
 driver: every capability, the queries, `vkCreateDevice` with the plan's
-chain and extensions under the validation layer (when installed), and the
-memory next to `pci::bar`. It fails on any validation error.
+chain and extensions under the validation layer (when installed), the
+memory next to `pci::bar`, the budget read again, the cache, and the queue
+priority (`NUMEROBIS_VK_PRIORITY=realtime|high|medium|low`, default `high`).
+It fails on any validation error.
 `NUMEROBIS_VK_API=1.1` caps the instance version, so the extension routes
 and their dependencies are the ones exercised.
 
@@ -227,6 +255,12 @@ manager (`cfgmgr32`: the assigned memory ranges, `DEVPKEY_PciDevice_*Link*`)
 and the display driver's registry key for the VRAM size.
 `vulkan::Memory::cpu_visible_vram` tells the same from Vulkan's side.
 
+`scan()` reads the OS on its first call and keeps the result for the process
+(BARs and links only change with a reboot, a firmware setting or a hot
+plug); a failed read is tried again next time. `scan_fresh()` always reads,
+`warm_up()` fills the cache at startup, and `find(vendor, device, address)` /
+`vulkan::DeviceInfo::bar()` pick a Vulkan device's entry from it.
+
 ```text
 $ cargo run --example bars
 Intel(R) Arc(TM) B580 Graphics [8086:e20b] Intel Xe2-HPG at 0000:03:00.0
@@ -255,7 +289,8 @@ capability that is untested on its OS with `(untested on Linux)`.
 | raw Tenstorrent backend | kernel code under qemu, on-card pending | unavailable |
 | `dmabuf`, `sync` | Linux only | unavailable |
 | `pci` tables, `vulkan` tables and waterfall | unit-tested | unit-tested |
-| Vulkan capabilities on a real driver | untested | 56 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
+| Vulkan capabilities on a real driver | untested | 58 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
+| `vulkan::priority` | untested | tested: all four levels accepted on the B580, API 1.0 to 1.4; the `NOT_PERMITTED` fallback unit-tested only |
 | `vulkan::interop` fd / dma-buf / DRM modifiers | untested | unavailable |
 | `vulkan::interop` Win32 handles | unavailable | tested |
 | `pci::bar` | untested (parsers unit-tested) | tested (Intel Arc B580) |

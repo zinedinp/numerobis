@@ -5,7 +5,8 @@
 //!
 //! `cargo run --example vulkan_probe` (`NUMEROBIS_NO_VALIDATION=1` skips the
 //! layer, `NUMEROBIS_VK_API=1.1` caps the instance version so the extension
-//! routes are used). Exits non-zero on a validation error or a failed `vkCreateDevice`.
+//! routes are used, `NUMEROBIS_VK_PRIORITY=realtime` asks that queue
+//! priority, default `high`). Exits non-zero on a validation error or a failed `vkCreateDevice`.
 //!
 //! No bindings: the loader is opened by hand (`vulkan-1.dll` on Windows,
 //! `libvulkan.so.1` on Linux). Windows: tested (Intel Arc B580). Linux:
@@ -18,9 +19,17 @@
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use numerobis::pci::bar;
-use numerobis::vulkan::{ApiVersion, Capability, DeviceInfo, FeatureQuery, Instance, Offer, Probe};
+use numerobis::vulkan::memory::bytes;
+use numerobis::vulkan::priority::{
+    self, QueueFamily, QueueFamilyQuery, QueuePriorityInfo, queue_flags,
+};
+use numerobis::vulkan::{
+    ApiVersion, BudgetCache, Capability, DeviceInfo, FeatureQuery, GlobalPriority, Instance,
+    Memory, Offer, Probe, cache,
+};
 
 type Void = unsafe extern "system" fn();
 type GetInstanceProcAddr = unsafe extern "system" fn(*mut c_void, *const c_char) -> Option<Void>;
@@ -221,6 +230,8 @@ type EnumerateDeviceExtensions = unsafe extern "system" fn(
 ) -> i32;
 type GetQueueFamilies =
     unsafe extern "system" fn(*mut c_void, *mut u32, *mut QueueFamilyProperties);
+/// `vkGetPhysicalDeviceQueueFamilyProperties2`.
+type GetQueueFamilies2 = unsafe extern "system" fn(*mut c_void, *mut u32, *mut c_void);
 type CreateDevice = unsafe extern "system" fn(
     *mut c_void,
     *const DeviceCreateInfo,
@@ -423,8 +434,10 @@ fn main() {
         let destroy_device =
             load::<DestroyDevice>(gipa, instance, c"vkDestroyDevice").expect("vkDestroyDevice");
         let physical = enumerate(|n, p| enumerate_devices(instance, n, p), || null);
-        let gpus = bar::scan().unwrap_or_default();
+        // The PCI side, read once and kept (pci::bar::scan caches it).
+        bar::warm_up();
         let mut failed = false;
+        let mut plans = Vec::new();
 
         for &pd in &physical {
             let mut properties = [0u64; 128];
@@ -475,86 +488,179 @@ fn main() {
             let plan = probe.plan();
             println!("\n{plan}");
 
-            // Create the device exactly as planned.
+            // Queue families: through ...2, with the priorities each allows when
+            // the plan can query them; the 1.0 call otherwise.
+            let families: Vec<QueueFamily> = if plan.query.has_chain() {
+                let get2 = load::<GetQueueFamilies2>(
+                    gipa,
+                    instance,
+                    if khr {
+                        c"vkGetPhysicalDeviceQueueFamilyProperties2KHR"
+                    } else {
+                        c"vkGetPhysicalDeviceQueueFamilyProperties2"
+                    },
+                )
+                .expect("queue families 2");
+                let mut count = 0;
+                get2(pd, &raw mut count, std::ptr::null_mut());
+                let mut query =
+                    QueueFamilyQuery::new(count, plan.has(Capability::GlobalPriorityQuery));
+                get2(pd, &raw mut count, query.as_mut_ptr());
+                query.read_first(count)
+            } else {
+                enumerate(
+                    |n, p| {
+                        queue_families(pd, n, p);
+                        SUCCESS
+                    },
+                    QueueFamilyProperties::default,
+                )
+                .iter()
+                .map(|f| QueueFamily {
+                    flags: f.flags,
+                    count: f.count,
+                    priorities: None,
+                })
+                .collect()
+            };
+            let family = families
+                .iter()
+                .position(|f| f.has(queue_flags::GRAPHICS | queue_flags::COMPUTE))
+                .or_else(|| families.iter().position(|f| f.count > 0))
+                .unwrap_or(0);
+            let allowed = families.get(family).and_then(|f| f.priorities.as_deref());
+            if let Some(allowed) = allowed {
+                let names: Vec<&str> = allowed.iter().map(|p| p.name()).collect();
+                println!("  queue family {family} allows: {}", names.join(", "));
+            }
+            let wanted: GlobalPriority = std::env::var("NUMEROBIS_VK_PRIORITY")
+                .ok()
+                .map_or(GlobalPriority::High, |s| {
+                    s.parse().expect("NUMEROBIS_VK_PRIORITY")
+                });
+            let order = priority::candidates(&plan, wanted, allowed);
+
+            // Create the device exactly as planned, at the best priority allowed.
             let device_extensions: Vec<&CStr> = plan.extensions().to_vec();
             let names: Vec<*const c_char> = device_extensions.iter().map(|e| e.as_ptr()).collect();
-            let families = enumerate(
-                |n, p| {
-                    queue_families(pd, n, p);
-                    SUCCESS
-                },
-                QueueFamilyProperties::default,
-            );
-            let family = families.iter().position(|f| f.count > 0).unwrap_or(0);
-            let priority = 1.0f32;
-            let queue = DeviceQueueCreateInfo {
-                s_type: 2,
-                p_next: std::ptr::null(),
-                flags: 0,
-                family: u32::try_from(family).expect("few families"),
-                count: 1,
-                priorities: &raw const priority,
-            };
+            let queue_priority = 1.0f32;
             let mut chain = plan.device_chain();
             let (p_next, enabled_features) = if plan.query.has_chain() {
                 (chain.features2().cast_const(), std::ptr::null())
             } else {
                 (std::ptr::null(), chain.core_features())
             };
-            let device_info = DeviceCreateInfo {
-                s_type: 3,
-                p_next,
-                flags: 0,
-                queue_info_count: 1,
-                queue_infos: &raw const queue,
-                layer_count: 0,
-                layers: std::ptr::null(),
-                extension_count: u32::try_from(names.len()).expect("few extensions"),
-                extensions: names.as_ptr(),
-                enabled_features,
-            };
-            let mut device = null;
-            let r = create_device(
-                pd,
-                &raw const device_info,
-                std::ptr::null(),
-                &raw mut device,
-            );
+            let created = priority::create_with_fallback(&order, |p| {
+                let global = p.map(GlobalPriority::create_info);
+                let queue = DeviceQueueCreateInfo {
+                    s_type: 2,
+                    p_next: global
+                        .as_ref()
+                        .map_or(std::ptr::null(), QueuePriorityInfo::as_ptr),
+                    flags: 0,
+                    family: u32::try_from(family).expect("few families"),
+                    count: 1,
+                    priorities: &raw const queue_priority,
+                };
+                let device_info = DeviceCreateInfo {
+                    s_type: 3,
+                    p_next,
+                    flags: 0,
+                    queue_info_count: 1,
+                    queue_infos: &raw const queue,
+                    layer_count: 0,
+                    layers: std::ptr::null(),
+                    extension_count: u32::try_from(names.len()).expect("few extensions"),
+                    extensions: names.as_ptr(),
+                    enabled_features,
+                };
+                let mut device = null;
+                let r = create_device(
+                    pd,
+                    &raw const device_info,
+                    std::ptr::null(),
+                    &raw mut device,
+                );
+                if r == priority::NOT_PERMITTED {
+                    println!(
+                        "  queue priority {}: not permitted, trying lower",
+                        p.map_or("default", GlobalPriority::name)
+                    );
+                }
+                if r == SUCCESS { Ok(device) } else { Err(r) }
+            });
             let granted: Vec<&str> = plan
                 .outcomes()
                 .iter()
                 .filter(|o| o.granted())
                 .map(|o| o.cap.name())
                 .collect();
-            if r == SUCCESS {
-                println!(
-                    "  vkCreateDevice: ok with {} extensions and {} feature bits",
-                    names.len(),
-                    plan.enabled().count()
-                );
-                destroy_device(device, std::ptr::null());
-            } else {
-                println!("  vkCreateDevice FAILED: {r}");
-                failed = true;
+            match created {
+                Ok((device, got)) => {
+                    println!(
+                        "  vkCreateDevice: ok with {} extensions and {} feature bits, queue priority {}",
+                        names.len(),
+                        plan.enabled().count(),
+                        got.map_or_else(
+                            || "default (no global_priority)".to_string(),
+                            |p| format!("{p} (asked {wanted})")
+                        )
+                    );
+                    destroy_device(device, std::ptr::null());
+                }
+                Err(r) => {
+                    println!("  vkCreateDevice FAILED: {r}");
+                    failed = true;
+                }
             }
             println!("  granted ({}): {}", granted.len(), granted.join(" "));
 
             // The PCI side of the same card.
-            let pci = gpus.iter().find(|g| match (g.address, info.pci) {
-                (Some(a), Some(b)) => a == b,
-                _ => g.ids.vendor.id() == info.vendor_id && g.ids.device == info.device_id,
-            });
-            match (pci, plan.memory()) {
+            match (info.bar(), plan.memory()) {
                 (Some(gpu), Some(memory)) => println!(
                     "  pci::bar: {}\n  CPU-visible VRAM: Vulkan {}, PCI aperture {}",
                     gpu.to_string().replace('\n', "\n  "),
-                    numerobis::vulkan::memory::bytes(memory.cpu_visible_vram()),
-                    gpu.cpu_visible()
-                        .map_or_else(|| "unknown".into(), numerobis::vulkan::memory::bytes)
+                    bytes(memory.cpu_visible_vram()),
+                    gpu.cpu_visible().map_or_else(|| "unknown".into(), bytes)
                 ),
                 (None, _) => println!("  pci::bar: no PCI device matches (not a PCI GPU?)"),
                 (_, None) => println!("  memory properties not read"),
             }
+
+            // The budget, read again now (it changes while the program runs).
+            if plan.query.has_chain() {
+                let read = entry(
+                    c"vkGetPhysicalDeviceMemoryProperties2",
+                    c"vkGetPhysicalDeviceMemoryProperties2KHR",
+                )
+                .expect("memory properties2");
+                let mut budget = BudgetCache::for_plan(&plan, Duration::ZERO);
+                match budget.refresh(|p| read(pd, p)).map(Memory::available_vram) {
+                    Some(Some(free)) => {
+                        println!("  VRAM available to this process now: {}", bytes(free));
+                    }
+                    Some(None) => println!("  VRAM available now: no VK_EXT_memory_budget"),
+                    None => {
+                        println!("  memory budget re-read FAILED: nothing written");
+                        failed = true;
+                    }
+                }
+            }
+            plans.push(plan);
+        }
+
+        // Kept for the process: later code asks the cache, not the driver.
+        let kept = cache::get_or_init(|| plans);
+        match cache::best(&[Capability::DynamicRendering, Capability::Synchronization2]) {
+            Some((index, plan)) => println!(
+                "\ncache: {} plan(s) kept; best for dynamic rendering + sync2: #{index} {}",
+                kept.len(),
+                plan.device_info().map_or("?", |d| d.name.as_str())
+            ),
+            None => println!(
+                "\ncache: {} plan(s) kept; none has dynamic rendering + sync2",
+                kept.len()
+            ),
         }
 
         if let Some(handle) = messenger {
