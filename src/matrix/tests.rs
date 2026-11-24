@@ -74,6 +74,13 @@ fn known_cards_name_their_engine() {
         Some(Engine::TensorCore(T::BlackwellGeForce))
     ); // RTX 5090
     assert_eq!(engine(0x1002, 0x73BF), None); // RX 6800 XT: dot products only
+    // None from the tables: known to have no engine, or not known at all.
+    let absent = |vendor, device| Engine::known_absent(Gpu::from_pci(vendor, device));
+    assert!(absent(0x1002, 0x73BF) && absent(0x1002, 0x1681)); // RX 6800 XT, Radeon 680M
+    assert!(absent(0x8086, 0xA780) && absent(0x10DE, 0x1F82));
+    assert!(!absent(0x1002, 0x744C)); // RX 7900 XTX has one
+    assert!(!absent(0x1002, 0x0001) && !absent(0x1234, 0x5678)); // not in the tables
+    assert!(!absent(0x1002, 0x7380)); // a CDNA id the tables don't place
     assert_eq!(engine(0x1002, 0x744C), Some(Engine::MatrixCore(M::Rdna3))); // RX 7900 XTX
     assert_eq!(engine(0x1002, 0x7550), Some(Engine::MatrixCore(M::Rdna4))); // RX 9070 XT
     assert_eq!(engine(0x1002, 0x738C), Some(Engine::MatrixCore(M::Cdna1))); // MI100

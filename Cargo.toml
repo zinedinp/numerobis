@@ -31,7 +31,7 @@ hip = []
 mock = []
 
 [dependencies]
-miraculix = { version = "0.7.0", default-features = false }
+miraculix = { version = "^0.7.0", default-features = false }
 
 # The raw backends and dma-bufs are Linux kernel UAPI.
 [target.'cfg(target_os = "linux")'.dependencies]

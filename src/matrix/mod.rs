@@ -360,6 +360,18 @@ impl Engine {
         }
     }
 
+    /// Whether the tables know that this GPU has no matrix engine (RDNA 2
+    /// and older, Intel before Xe-HPG, NVIDIA before Volta, TU116/TU117),
+    /// as opposed to [`from_gpu`](Self::from_gpu) giving `None` because
+    /// they don't know the GPU (or its CDNA generation).
+    #[must_use]
+    pub const fn known_absent(gpu: Gpu) -> bool {
+        match gpu.architecture {
+            Architecture::Unknown | Architecture::Amd(crate::pci::AmdArch::Cdna) => false,
+            _ => Self::from_gpu(gpu).is_none(),
+        }
+    }
+
     /// How `gemm_<a>_<b>_<acc>` gets onto this engine: natively, after
     /// [`widen`]ing its inputs (exact: every value stays), with an `F16` or
     /// `BF16` accumulator widened to `F32` (closer, not the same bits), or

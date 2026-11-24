@@ -1325,7 +1325,11 @@ fn main() {
                     .architecture
                     .name()
                     .unwrap_or("unknown architecture"),
-                engine.map_or_else(|| "unknown".to_string(), |e| e.to_string())
+                match engine {
+                    Some(e) => e.to_string(),
+                    None if Engine::known_absent(info.gpu()) => "none".to_string(),
+                    None => "unknown".to_string(),
+                }
             );
 
             let mut n = 0;
