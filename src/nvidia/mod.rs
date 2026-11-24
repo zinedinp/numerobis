@@ -19,7 +19,7 @@
 
 #![allow(
     clippy::cast_possible_truncation,
-    reason = "64-bit Linux only (asserted below): u64 -> usize is lossless; \
+    reason = "64-bit Linux only (gated below): u64 -> usize is lossless; \
               narrower casts fill hardware-sized fields (QMD, pushbuffer, RM params)"
 )]
 
@@ -27,20 +27,16 @@ pub mod program;
 pub mod qmd;
 pub mod tiers;
 
-#[cfg(all(feature = "nvidia", target_os = "linux"))]
+// The raw backend casts u64 device sizes and addresses to usize, so it is
+// built only for 64-bit targets: on a 32-bit one the feature compiles to
+// nothing and `Device::all` skips it.
+#[cfg(all(feature = "nvidia", target_os = "linux", target_pointer_width = "64"))]
 pub mod backend;
-#[cfg(all(feature = "nvidia", target_os = "linux"))]
+#[cfg(all(feature = "nvidia", target_os = "linux", target_pointer_width = "64"))]
 mod gpu;
-#[cfg(all(feature = "nvidia", target_os = "linux"))]
+#[cfg(all(feature = "nvidia", target_os = "linux", target_pointer_width = "64"))]
 mod queue;
-#[cfg(all(feature = "nvidia", target_os = "linux"))]
+#[cfg(all(feature = "nvidia", target_os = "linux", target_pointer_width = "64"))]
 pub(crate) mod sys;
 
 pub use tiers::Tier;
-
-// The raw backend casts u64 device sizes and addresses to usize.
-#[cfg(all(feature = "nvidia", target_os = "linux"))]
-const _: () = assert!(
-    usize::BITS == 64,
-    "the nvidia backend needs a 64-bit target"
-);

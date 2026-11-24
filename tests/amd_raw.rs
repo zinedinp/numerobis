@@ -5,7 +5,7 @@
 //! signal and kernarg slots, timing, dma-bufs, reopening, placement.
 //! Skipped without an AMD GPU that KFD lists.
 
-#![cfg(all(feature = "amd", target_os = "linux"))]
+#![cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
 #![allow(
     clippy::cast_precision_loss,
     clippy::many_single_char_names,

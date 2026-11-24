@@ -18,7 +18,7 @@
     clippy::many_single_char_names,
     reason = "test data is built with bit-level casts; shapes are named as in the math"
 )]
-#![cfg(all(feature = "tt", target_os = "linux"))]
+#![cfg(all(feature = "tt", target_os = "linux", target_pointer_width = "64"))]
 
 use std::time::Instant;
 

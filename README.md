@@ -39,9 +39,9 @@ numerobis = { version = "0.4.0-beta", features = ["nvidia", "amd", "tt"] }
 
 | Feature | Enables |
 |---|---|
-| `nvidia` | raw NVIDIA backend (Linux, open kernel modules) |
-| `amd` | raw AMD backend (Linux, `amdgpu` with KFD, Linux 6.6 or later) |
-| `tt` | raw Tenstorrent backend (Linux, tt-kmd 2.x) |
+| `nvidia` | raw NVIDIA backend (64-bit Linux, open kernel modules) |
+| `amd` | raw AMD backend (64-bit Linux, `amdgpu` with KFD, Linux 6.6 or later) |
+| `tt` | raw Tenstorrent backend (64-bit Linux, tt-kmd 2.x) |
 | `mock` | host reference backend (`Device::mock()`), for tests |
 | `vulkan` | `numerobis::vulkan`: the Vulkan capability waterfall (and later the comfort compute backend) |
 | `directx` | `numerobis::directx`: Direct3D 8 to 12 capabilities, legacy and modern apart |
@@ -52,6 +52,11 @@ needs. With both, `directx::vulkan` converts between them.
 
 Without any feature, `Device::all()` is empty and the crate still builds
 (type layer, ops API, ELF loader, `pci`).
+
+The raw backends cast 64-bit device sizes and addresses to `usize`, so they
+are built only for 64-bit targets: on a 32-bit one (i686, ARMv7) `nvidia`,
+`amd` and `tt` compile to nothing and `Device::all()` leaves them out. The
+rest of the crate builds there too.
 
 ## Feature detection
 

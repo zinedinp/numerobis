@@ -17,6 +17,19 @@ pub(crate) const fn iowr<T>(ty: u8, nr: u8) -> u64 {
     ioc(IOC_READ | IOC_WRITE, ty, nr, size_of::<T>())
 }
 
+/// `req` as libc's `ioctl` takes it: [`libc::Ioctl`] is `c_ulong` with
+/// glibc (32 bits on a 32-bit target) and `c_int` with musl.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    reason = "an `_IOC` number has 32 bits (dir 2, size 14, type 8, nr 8): \
+              nothing is lost, and musl's c_int takes the same bits"
+)]
+pub(crate) const fn ioctl_request(req: u64) -> libc::Ioctl {
+    debug_assert!(req >> 32 == 0, "ioctl request wider than 32 bits");
+    req as libc::Ioctl
+}
+
 pub(crate) fn errno() -> i32 {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
 }
@@ -45,7 +58,7 @@ impl Fd {
     pub(crate) unsafe fn ioctl<T>(&self, req: u64, arg: *mut T) -> Result<()> {
         loop {
             // SAFETY: forwarded to the caller.
-            let r = unsafe { libc::ioctl(self.0, req as _, arg) };
+            let r = unsafe { libc::ioctl(self.0, ioctl_request(req), arg) };
             if r >= 0 {
                 return Ok(());
             }

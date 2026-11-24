@@ -14,21 +14,20 @@
 #![allow(
     clippy::cast_possible_truncation,
     clippy::many_single_char_names,
-    reason = "64-bit Linux only (asserted below): u64 -> usize is lossless; \
+    reason = "64-bit Linux only (gated below): u64 -> usize is lossless; \
               L1 addresses and mailbox words are 32-bit; x, y are NoC coordinates"
 )]
 
 pub mod tiers;
 
-#[cfg(all(feature = "tt", target_os = "linux"))]
+// The raw backend casts u64 device sizes and addresses to usize, so it is
+// built only for 64-bit targets: on a 32-bit one the feature compiles to
+// nothing and `Device::all` skips it.
+#[cfg(all(feature = "tt", target_os = "linux", target_pointer_width = "64"))]
 pub mod backend;
-#[cfg(all(feature = "tt", target_os = "linux"))]
+#[cfg(all(feature = "tt", target_os = "linux", target_pointer_width = "64"))]
 pub mod card;
-#[cfg(all(feature = "tt", target_os = "linux"))]
+#[cfg(all(feature = "tt", target_os = "linux", target_pointer_width = "64"))]
 pub(crate) mod sys;
 
 pub use tiers::Tier;
-
-// The raw backend casts u64 device sizes and addresses to usize.
-#[cfg(all(feature = "tt", target_os = "linux"))]
-const _: () = assert!(usize::BITS == 64, "the tt backend needs a 64-bit target");

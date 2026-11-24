@@ -66,11 +66,11 @@ impl Device {
     pub fn all() -> Vec<Device> {
         #[allow(unused_mut)]
         let mut v = Vec::new();
-        #[cfg(all(feature = "nvidia", target_os = "linux"))]
+        #[cfg(all(feature = "nvidia", target_os = "linux", target_pointer_width = "64"))]
         v.extend(crate::nvidia::backend::open_all());
-        #[cfg(all(feature = "amd", target_os = "linux"))]
+        #[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
         v.extend(crate::amd::backend::open_all());
-        #[cfg(all(feature = "tt", target_os = "linux"))]
+        #[cfg(all(feature = "tt", target_os = "linux", target_pointer_width = "64"))]
         v.extend(crate::tt::backend::open_all());
         v
     }

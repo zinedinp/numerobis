@@ -71,10 +71,16 @@ struct RawBudget {
     usage: [u64; MAX_HEAPS],
 }
 
-// The C layouts: VkMemoryHeap is 16 bytes, the properties 520 (no
-// pointers, the same on 32-bit); the chained structs grow with `HEADER`.
-const _: () = assert!(size_of::<RawHeap>() == 16);
-const _: () = assert!(size_of::<RawMemoryProperties>() == 520);
+// The C layouts. No pointers, but `VkDeviceSize` is a u64, and its
+// alignment sets the size of VkMemoryHeap: 16 bytes and properties of 520
+// where u64 is 8-aligned (64-bit, 32-bit Windows and ARM), 12 and 456 on
+// 32-bit x86 System V (i386 Linux), where it is 4-aligned. The chained
+// structs grow with `HEADER`.
+const _: () = assert!(match align_of::<u64>() {
+    8 => size_of::<RawHeap>() == 16 && size_of::<RawMemoryProperties>() == 520,
+    4 => size_of::<RawHeap>() == 12 && size_of::<RawMemoryProperties>() == 456,
+    _ => false,
+});
 const _: () = assert!(std::mem::offset_of!(RawMemoryProperties, heaps) == 264);
 const _: () = assert!(std::mem::offset_of!(RawMemoryProperties2, properties) == super::HEADER);
 const _: () = assert!(size_of::<RawBudget>() == super::HEADER + 2 * 8 * MAX_HEAPS);

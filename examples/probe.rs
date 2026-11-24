@@ -7,24 +7,30 @@ use numerobis::Device;
 fn main() {
     #[allow(unused_mut)]
     let mut devices = Device::all();
-    #[cfg(all(feature = "nvidia", target_os = "linux"))]
+    #[cfg(all(feature = "nvidia", target_os = "linux", target_pointer_width = "64"))]
     for r in numerobis::nvidia::backend::probe() {
         if let Err(e) = r {
             println!("nvidia: {e}");
         }
     }
-    #[cfg(all(feature = "amd", target_os = "linux"))]
+    #[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
     for r in numerobis::amd::backend::probe() {
         if let Err(e) = r {
             println!("amd: {e}");
         }
     }
-    #[cfg(all(feature = "tt", target_os = "linux"))]
+    #[cfg(all(feature = "tt", target_os = "linux", target_pointer_width = "64"))]
     for r in numerobis::tt::backend::probe() {
         if let Err(e) = r {
             println!("tt: {e}");
         }
     }
+    #[cfg(all(
+        any(feature = "nvidia", feature = "amd", feature = "tt"),
+        target_os = "linux",
+        not(target_pointer_width = "64")
+    ))]
+    println!("nvidia, amd, tt: the raw backends need a 64-bit target, not built");
     #[cfg(feature = "mock")]
     devices.push(Device::mock());
     if devices.is_empty() {

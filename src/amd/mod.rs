@@ -20,24 +20,23 @@
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
-    reason = "64-bit Linux only (asserted below): u64 <-> usize is lossless; \
+    reason = "64-bit Linux only (gated below): u64 <-> usize is lossless; \
               narrower casts fill hardware-sized fields (AQL packet, KFD args)"
 )]
 
 pub mod program;
 pub mod tiers;
 
-#[cfg(all(feature = "amd", target_os = "linux"))]
+// The raw backend casts u64 device sizes and addresses to usize, so it is
+// built only for 64-bit targets: on a 32-bit one the feature compiles to
+// nothing and `Device::all` skips it.
+#[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
 pub mod backend;
-#[cfg(all(feature = "amd", target_os = "linux"))]
+#[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
 pub mod kfd;
-#[cfg(all(feature = "amd", target_os = "linux"))]
+#[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
 mod queue;
-#[cfg(all(feature = "amd", target_os = "linux"))]
+#[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
 pub(crate) mod sys;
 
 pub use tiers::Tier;
-
-// The raw backend casts u64 device sizes and addresses to usize.
-#[cfg(all(feature = "amd", target_os = "linux"))]
-const _: () = assert!(usize::BITS == 64, "the amd backend needs a 64-bit target");

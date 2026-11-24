@@ -87,7 +87,13 @@ pub struct Properties {
 }
 
 const _: () = assert!(size_of::<Version>() == 8 && size_of::<Size>() == 8);
-const _: () = assert!(size_of::<Properties>() == 8 + 2 * size_of::<u64>());
+// 24 bytes where u64 is 8-aligned, 20 on 32-bit x86 System V (no padding
+// after the count).
+const _: () = assert!(match align_of::<u64>() {
+    8 => size_of::<Properties>() == 24,
+    4 => size_of::<Properties>() == 20,
+    _ => false,
+});
 
 /// `xess_quality_settings_t`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

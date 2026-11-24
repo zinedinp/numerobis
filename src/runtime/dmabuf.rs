@@ -38,7 +38,7 @@
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 
 use crate::runtime::error::{Error, Result, invalid};
-use crate::runtime::os::{Fd, IOC_WRITE, Map, RW, errno, ioc, iowr};
+use crate::runtime::os::{Fd, IOC_WRITE, Map, RW, errno, ioc, ioctl_request, iowr};
 
 #[repr(C)]
 struct DmaBufSync {
@@ -77,7 +77,7 @@ const _: () = assert!(size_of::<PrimeHandle>() == 12);
 unsafe fn ioctl<T>(fd: RawFd, req: u64, arg: *mut T) -> Result<i32> {
     loop {
         // SAFETY: forwarded to the caller.
-        let r = unsafe { libc::ioctl(fd, req as _, arg) };
+        let r = unsafe { libc::ioctl(fd, ioctl_request(req), arg) };
         if r >= 0 {
             return Ok(r);
         }
@@ -258,7 +258,13 @@ impl HostDmabuf {
     fn sync(&self, flags: u64) {
         let mut s = DmaBufSync { flags };
         // SAFETY: DmaBufSync matches DMA_BUF_IOCTL_SYNC; memfds answer ENOTTY, which is fine.
-        let _ = unsafe { libc::ioctl(self.fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC as _, &mut s) };
+        let _ = unsafe {
+            libc::ioctl(
+                self.fd.as_raw_fd(),
+                ioctl_request(DMA_BUF_IOCTL_SYNC),
+                &raw mut s,
+            )
+        };
     }
 
     /// Copies `dst.len()` bytes from offset `off` out (CPU read bracket).
