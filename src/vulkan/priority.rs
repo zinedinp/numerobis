@@ -130,7 +130,11 @@ pub struct QueuePriorityInfo {
     priority: i32,
 }
 
-const _: () = assert!(size_of::<QueuePriorityInfo>() == 24);
+// 24 bytes on 64-bit (padded after `priority`), 12 on 32-bit.
+const _: () = assert!(
+    size_of::<QueuePriorityInfo>()
+        == (super::HEADER + 4).next_multiple_of(align_of::<*const c_void>())
+);
 
 // SAFETY: `p_next` is only stored for the host, never dereferenced here.
 unsafe impl Send for QueuePriorityInfo {}
@@ -216,8 +220,8 @@ struct RawPriorities {
 }
 
 const _: () = assert!(size_of::<RawFamily>() == 24);
-const _: () = assert!(size_of::<RawFamily2>() == 40);
-const _: () = assert!(std::mem::offset_of!(RawPriorities, priorities) == 20);
+const _: () = assert!(size_of::<RawFamily2>() == super::HEADER + 24);
+const _: () = assert!(std::mem::offset_of!(RawPriorities, priorities) == super::HEADER + 4);
 
 /// The array for `vkGetPhysicalDeviceQueueFamilyProperties2`, with a
 /// `VkQueueFamilyGlobalPriorityProperties` behind each entry when asked.

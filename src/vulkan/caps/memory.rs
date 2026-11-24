@@ -130,3 +130,17 @@ pub const HOST_IMAGE_COPY: Spec = Spec {
         ),
     ],
 };
+
+pub const SPARSE_RESIDENCY: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[],
+    name: "sparse_residency",
+    doc: "sparse buffers and 2D images, partly resident and aliased (Direct3D's tiled resources)",
+    routes: &[core10(&[
+        "sparseBinding",
+        "sparseResidencyBuffer",
+        "sparseResidencyImage2D",
+        "sparseResidencyAliased",
+    ])],
+};

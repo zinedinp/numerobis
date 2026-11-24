@@ -402,6 +402,26 @@ impl FromStr for PciAddress {
     }
 }
 
+/// `bytes` with a binary unit, for logs (`11.83 GiB`, `256 MiB`).
+#[must_use]
+pub fn bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut unit = 0;
+    let mut whole = bytes;
+    while whole >= 1024 && unit + 1 < UNITS.len() {
+        whole /= 1024;
+        unit += 1;
+    }
+    let exact = bytes.is_multiple_of(1 << (10 * unit));
+    if exact {
+        format!("{whole} {}", UNITS[unit])
+    } else {
+        #[allow(clippy::cast_precision_loss, reason = "two decimals for a log")]
+        let v = bytes as f64 / (1u64 << (10 * unit)) as f64;
+        format!("{v:.2} {}", UNITS[unit])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

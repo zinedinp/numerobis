@@ -41,10 +41,15 @@ numerobis = { version = "0.4.0-beta", features = ["nvidia", "tt"] }
 | `nvidia` | raw NVIDIA backend (Linux, open kernel modules) |
 | `tt` | raw Tenstorrent backend (Linux, tt-kmd 2.x) |
 | `mock` | host reference backend (`Device::mock()`), for tests |
-| `intel`, `amd`, `xdna`, `v3d`, `accel`, `vulkan`, `cuda`, `hip` | reserved, no code yet (`numerobis::vulkan` needs no feature) |
+| `vulkan` | `numerobis::vulkan`: the Vulkan capability waterfall (and later the comfort compute backend) |
+| `directx` | `numerobis::directx`: Direct3D 8 to 12 capabilities, legacy and modern apart |
+| `intel`, `amd`, `xdna`, `v3d`, `accel`, `cuda`, `hip` | reserved, no code yet |
 
-Without any backend feature, `Device::all()` is empty and the crate still builds
-(type layer, ops API, ELF loader, `pci`, `vulkan`).
+`vulkan` and `directx` build without each other; a host takes the one it
+needs. With both, `directx::vulkan` converts between them.
+
+Without any feature, `Device::all()` is empty and the crate still builds
+(type layer, ops API, ELF loader, `pci`).
 
 ## Feature detection
 
@@ -103,8 +108,7 @@ Every op takes a `Choice`:
 ## Vulkan feature waterfall (`numerobis::vulkan`)
 
 For a graphics host that wants the best Vulkan path the system allows, on
-every OS and without any backend feature (the `vulkan` Cargo feature is the
-planned compute backend, not this). Like `pci` it is data plus logic: no
+every OS (feature `vulkan`). Like `pci` it is data plus logic: no
 Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
 ...), and the structs it hands over are plain C layouts.
 
@@ -113,12 +117,14 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   from, the extensions the version promoted, which single struct a version
   struct absorbed when, and every extension's `depends` expression. Generated
   from `vk.xml` (see below).
-- `vulkan::caps`: 74 `Capability`s, one module per area: `draw`, `memory`,
+- `vulkan::caps`: 94 `Capability`s, one module per area: `draw`, `mesh`
+  (mesh and task shaders), `ray tracing` (acceleration structures,
+  pipelines, ray queries, opacity micromaps, invocation reorder), `memory`,
   `shader`, `compute` (cooperative matrix, bfloat16, float8, memory model),
   `descriptor`, `pipeline` (dynamic state, pipeline libraries, shader
   objects, maintenance4-6), `sync` (timelines, queries, queue priority),
-  `render` (texture compression, debug
-  raster), `present` (present id/wait), `interop` (fd, dma-buf and DRM
+  `render` (texture compression, debug raster, shading rate, interlock,
+  conservative rasterization), `present` (present id/wait), `interop` (fd, dma-buf and DRM
   modifiers on Linux; Win32 handles on Windows). Each has its routes in
   fallback order: newest core version first, then the extensions that
   offered it before, and may `need` others (`shader_object` needs
@@ -244,6 +250,93 @@ python scripts/gen-vulkan.py path/to/vk.xml --check  # fail if out of date
 The script also fails on any `c"VK_..."` name under `src/vulkan` that the
 registry doesn't know.
 
+## DirectX (`numerobis::directx`)
+
+Direct3D 8 to 12 for a graphics host (feature `directx`), on the same terms
+as `vulkan`: data plus logic, no bindings, the host makes the COM calls and
+hands over what they fill. The tables come from the Windows SDK headers
+(`scripts/gen-directx.py`): every `CheckFeatureSupport` struct of D3D11 and
+D3D12 with its id and members, the tier and shader model values,
+`D3DCAPS9` and its bits, and the COM interface ids.
+
+The two eras share nothing but the name, so they are kept apart:
+
+- `directx::legacy`, **Direct3D 8 and 9**: the fixed-function pipeline next
+  to shader models 1 to 3, read from one `D3DCAPS9` (`D3DCAPS8` is its first
+  53 words, so one buffer holds either). 47 `Capability`s in `fixed
+  function`, `shader`, `texture`, `output` and `vertex`. Direct3D had no
+  feature levels then: `LegacyLevel` (fixed function, SM 1, 1.4, 2, 2.x, 3)
+  is numerobis's own, with the nearest 9_x feature level where one fits.
+- `directx::modern`, **Direct3D 10, 11 and 12** on DXGI and WDDM: no fixed
+  function, geometry shaders from 10, Direct3D's own `FeatureLevel`s (9_1 to
+  12_2, and 1_0_core / 1_0_generic for compute-only MCDM devices such as
+  NPUs). 70 `Capability`s in twelve areas, with raytracing, mesh shaders,
+  shading rate, sampler feedback and work graphs each their own. A
+  capability's routes are alternatives: the feature level, a D3D12 member,
+  a D3D11 member; D3D12 ones also need their HLSL shader model.
+
+```rust
+use numerobis::directx::{Api, FeatureLevel, Select};
+use numerobis::directx::modern::{Capability as Cap, Probe, queue};
+
+// Pin a version (`"11".parse()`) or detect the newest that works.
+let select: Select = "auto".parse()?;
+let (api, device) = select.first(|api| create_device(api)).expect("Direct3D");
+// D3D12: the probe drives every CheckFeatureSupport, steps the shader model
+// and root signature down where an older runtime refuses, and reads them.
+let mut probe = Probe::new(Api::D3D12, level, &[Cap::Raytracing11, Cap::MeshShader])
+    .with_adapter(adapter); // dxgi::Adapter::from_desc1(&GetDesc1)
+probe.fill(|feature, data, size| unsafe { device.CheckFeatureSupport(feature, data, size) }.is_ok());
+let plan = probe.plan();
+// A queue at high priority, realtime only with SeIncreaseBasePriorityPrivilege.
+let order = queue::candidates(queue::ListType::Direct, wanted, check, has_privilege);
+```
+
+Also there:
+
+- `modern::dxgi`: the adapter (ids tied to `pci` as for Vulkan, `bar()` for
+  resizable BAR, the LUID Vulkan reports too), the video memory budget with
+  a `BudgetCache`, `rank`. `modern::cache` keeps the plans for the process.
+- `modern::queue`: `D3D12_COMMAND_QUEUE_PRIORITY`. The device says which
+  priorities a queue type takes, but not whether the process may: global
+  realtime needs `SeIncreaseBasePriorityPrivilege`
+  (`QueuePriority::privilege`), checked before trying.
+- `directx::Runtime`: Microsoft, WARP, D3D9On12, the Xbox GDK, and the
+  community layers DXVK, vkd3d-proton, wined3d and d3d8to9 (how Direct3D
+  runs on Linux through Wine and Proton), with the interfaces only each
+  answers (`QueryInterface` tells which one a device belongs to).
+- `directx::vulkan` (with feature `vulkan`): conversions done in `const fn`s
+  (queue priority, `DXGI_FORMAT` to `VkFormat` as DXVK maps them), the
+  Vulkan capabilities DXVK / vkd3d-proton need before they report a Direct3D
+  one, and the highest feature level a Vulkan device could back.
+
+**Direct3D 8.** Microsoft ships `d3d8.dll` for 32-bit only. d3d8to9
+(BSD-2-Clause) turns it into Direct3D 9 calls but builds for x86 only and
+keeps shader handles in 32-bit `DWORD`s; DXVK's d3d8 (zlib) does the same on
+its Direct3D 9, 64-bit. `Caps9::as_d3d8` is their caps conversion (DXVK's
+bit list, d3d8to9's constant clamp, and three Direct3D 9 / 9Ex bits both
+miss). Against Microsoft's real 32-bit runtime on the B580: 48 of 53 words
+equal and every capability the same (a unit test keeps those caps).
+
+**Older than 8** is not covered: DirectDraw, which Direct3D 7 lives on, is a
+separate surface API, too much work for something nobody targets any more.
+Direct3D 7-class hardware still shows up through the D3D8/9 caps as
+`LegacyLevel::FixedFunction`. Not built yet either: DirectStorage (its own
+redistributable and queues) and DirectSR (TODOs in `directx`).
+
+`cargo run --example directx_probe --features directx` runs it against the
+installed drivers: every adapter and every selected version, D3D12 and D3D11
+under their debug layers, a command queue at the asked priority, the D3D9
+caps with the D3D8 conversion, and in a 32-bit build the real D3D8 runtime
+next to the conversion (`NUMEROBIS_DX=12|11|10|9|8|auto|auto-11`,
+`NUMEROBIS_DX_PRIORITY=realtime|high|normal`). It fails on a debug layer
+error or a pinned version that could not be created.
+
+```sh
+python scripts/gen-directx.py                # newest Windows SDK under Windows Kits
+python scripts/gen-directx.py path/to/Include/10.0.26100.0 --check
+```
+
 ## PCI BARs and resizable BAR (`numerobis::pci::bar`)
 
 `pci::bar::scan()` lists every display-class PCI device from the OS, without
@@ -288,13 +381,18 @@ capability that is untested on its OS with `(untested on Linux)`.
 | raw NVIDIA backend | tested (RTX 3080) | unavailable |
 | raw Tenstorrent backend | kernel code under qemu, on-card pending | unavailable |
 | `dmabuf`, `sync` | Linux only | unavailable |
-| `pci` tables, `vulkan` tables and waterfall | unit-tested | unit-tested |
-| Vulkan capabilities on a real driver | untested | 58 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
+| `pci` tables, `vulkan` tables and waterfall, `directx` tables | unit-tested | unit-tested |
+| Vulkan capabilities on a real driver | untested | 77 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
+| Direct3D 10 to 12 capabilities on a real driver | untested (DXVK, vkd3d-proton) | 59 tested (B580: D3D12 at 12_2 with shader model 6.8, D3D11, 10.1, under the debug layers) |
+| Direct3D 8 / 9 capabilities | untested (DXVK) | 45 tested (B580: D3D9, and D3D8 from Microsoft's 32-bit runtime) |
+| `directx::modern::queue` | untested | tested: normal and high; global realtime refused without the privilege, with it untested |
 | `vulkan::priority` | untested | tested: all four levels accepted on the B580, API 1.0 to 1.4; the `NOT_PERMITTED` fallback unit-tested only |
 | `vulkan::interop` fd / dma-buf / DRM modifiers | untested | unavailable |
 | `vulkan::interop` Win32 handles | unavailable | tested |
-| `pci::bar` | untested (parsers unit-tested) | tested (Intel Arc B580) |
+| `pci::bar` | untested (parsers unit-tested) | tested (Intel Arc B580); a 32-bit process gets no ranges (the OS hides them under WOW64, reported as such) |
+| 32-bit x86 (`i686-pc-windows-msvc`) | untested | tested: lib tests, `vulkan_probe`, `directx_probe` (needs miraculix 0.6.5) |
 | `examples/vulkan_probe` loader | untested (`libvulkan.so.1`) | tested (`vulkan-1.dll`) |
+| `examples/directx_probe` | unavailable (a Windows program; under Wine untested) | tested |
 
 `Capability::spec().support` has the per-capability flag; on Windows the
 capabilities the B580 doesn't have (bfloat16, float8, shader objects, ASTC,
@@ -370,6 +468,8 @@ native matrix tiers will get per-tier tolerances.
   `scripts/build-kernels.sh --check` verifies `kernels/bin` is up to date.
 - Regenerating the Vulkan tables (only when adding structs or versions):
   Python 3, rustfmt and a `vk.xml` ([see above](#regenerating-the-tables)).
+- Regenerating the DirectX tables: Python 3, rustfmt and the Windows SDK
+  headers (`um/` and `shared/` of `Include/<version>`).
 
 ### Tenstorrent notes
 
@@ -425,6 +525,9 @@ Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
   MFMA/WMMA), **NPUs** (Intel NPU, AMD XDNA, RK3588, Ethos-U) with dma-buf
   sharing between iGPU and NPU, **Raspberry Pi** (`v3d` QPU code generation).
 - **Comfort `vulkan`** backend as the universal fallback (cooperative matrix).
+- **DirectX:** DirectStorage (GPU decompression from NVMe into D3D12
+  resources) and DirectSR (super resolution) probes; DirectDraw / Direct3D 7
+  only if someone needs them.
 - Per-target kernel crates, so the crate stays under the crates.io size limit.
 - Upstreaming what the prototypes prove (see `docs/llvm-todo.md`): MiniFloat
   types and block-scaled intrinsics in LLVM, kernels in Rust.

@@ -1,6 +1,6 @@
 [package]
 name = "numerobis"
-version = "0.4.3-beta"
+version = "0.5.0-pre"
 authors = ["Zinedin Polic"]
 edition = "2024"
 rust-version = "1.100.0"
@@ -20,8 +20,11 @@ tt = []
 xdna = []
 v3d = []
 accel = []
-# Comfort backends.
+# Comfort backends. `vulkan` and `directx` are the graphics API tables
+# (capabilities, routes, probes); each builds without the other, and with
+# both `directx::vulkan` converts between them.
 vulkan = []
+directx = []
 cuda = []
 hip = []
 # Test-only backend: runs the Emulated semantics in Rust on the host.
@@ -36,7 +39,15 @@ libc = "0.2.191"
 
 [dev-dependencies]
 # Turns the mock backend on for integration tests and doctests.
-numerobis = { path = ".", features = ["mock"] }
+numerobis = { path = ".", features = ["mock", "vulkan", "directx"] }
+
+[[example]]
+name = "vulkan_probe"
+required-features = ["vulkan"]
+
+[[example]]
+name = "directx_probe"
+required-features = ["directx"]
 
 # The project's standard: clippy::pedantic, with the exceptions reasoned
 # where they are (`#[allow(..., reason = "...")]`).

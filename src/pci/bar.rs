@@ -13,13 +13,14 @@
 //! Cards with a PCIe switch on board (Intel Arc, recent AMD) show a x1 link
 //! on the GPU itself; [`Gpu::link`] is the switch's upstream link, the one in
 //! the slot. Vulkan tells the CPU-visible VRAM from its side with
-//! [`vulkan::Memory`](crate::vulkan::Memory).
+//! `vulkan::Memory` (and DirectX with
+//! `directx::modern::VideoMemory`).
 
 use std::fmt;
 use std::io;
 use std::sync::OnceLock;
 
-use super::PciAddress;
+use super::{PciAddress, bytes};
 use crate::platform::{Status, Support};
 
 /// Where this was run: Windows (Intel Arc B580); Linux untested.
@@ -147,6 +148,9 @@ pub enum ResizableBar {
     /// The aperture is small and the OS does not say whether the card could
     /// do more (Windows).
     Unknown,
+    /// The OS doesn't show this process the ranges at all
+    /// ([`Gpu::ranges_hidden`]).
+    Hidden,
 }
 
 /// One display-class PCI device.
@@ -172,8 +176,14 @@ pub struct Gpu {
     pub own_link: Option<Link>,
     /// VRAM in bytes, where the OS tells (Windows: the display driver's
     /// registry key; Linux: `amdgpu` only). Set it from
-    /// [`vulkan::Memory::vram`](crate::vulkan::Memory::vram) otherwise.
+    /// `vulkan::Memory::vram` otherwise.
     pub vram: Option<u64>,
+    /// The OS keeps the assigned memory ranges from this process, so
+    /// [`bars`](Self::bars) is empty without saying anything about the
+    /// card: a 32-bit process on 64-bit Windows, where the configuration
+    /// manager's resource calls return `CR_CALL_NOT_IMPLEMENTED` under
+    /// WOW64. Run 64-bit to read them.
+    pub ranges_hidden: bool,
 }
 
 impl Gpu {
@@ -218,6 +228,9 @@ impl Gpu {
     /// The resizable-BAR state.
     #[must_use]
     pub fn resizable_bar(&self) -> ResizableBar {
+        if self.ranges_hidden && self.bars.is_empty() {
+            return ResizableBar::Hidden;
+        }
         if self.full_access() == Some(true) {
             return ResizableBar::Active;
         }
@@ -234,10 +247,6 @@ impl Gpu {
             None => ResizableBar::Unknown,
         }
     }
-}
-
-fn bytes(v: u64) -> String {
-    crate::vulkan::memory::bytes(v)
 }
 
 impl fmt::Display for Gpu {
@@ -279,6 +288,10 @@ impl fmt::Display for Gpu {
                 bar.base,
                 if bar.above_4g() { "above" } else { "below" }
             )?,
+            None if self.ranges_hidden => writeln!(
+                f,
+                "  VRAM {vram}, memory BARs hidden from this process (32-bit under WOW64)"
+            )?,
             None => writeln!(f, "  VRAM {vram}, no memory BAR reported")?,
         }
         let rebar = match self.resizable_bar() {
@@ -286,6 +299,9 @@ impl fmt::Display for Gpu {
             ResizableBar::Inactive { max } => format!("capable up to {}, not active", bytes(max)),
             ResizableBar::NotCapable => "not capable".into(),
             ResizableBar::Unknown => "unknown (small aperture; the OS doesn't say why)".into(),
+            ResizableBar::Hidden => {
+                "unknown (the OS hides the ranges from a 32-bit process)".into()
+            }
         };
         write!(f, "  resizable BAR: {rebar}")
     }
@@ -318,7 +334,7 @@ pub fn warm_up() {
 
 /// The scanned device at `address`, or else the first one with these PCI
 /// ids (two identical cards without an address are told apart by order
-/// only). [`DeviceInfo::bar`](crate::vulkan::DeviceInfo::bar) asks with a
+/// only). `vulkan::DeviceInfo::bar` asks with a
 /// Vulkan device's ids.
 #[must_use]
 pub fn find(vendor: u32, device: u32, address: Option<PciAddress>) -> Option<&'static Gpu> {
@@ -463,6 +479,7 @@ mod linux {
                 behind_switch: slot != dir,
                 own_link: link(&dir, "current"),
                 vram: read(&dir, "mem_info_vram_total").and_then(|v| v.trim().parse().ok()),
+                ranges_hidden: false,
             });
         }
         out.sort_by_key(|g| g.address);
@@ -482,6 +499,8 @@ mod windows {
 
     const CR_SUCCESS: u32 = 0;
     const CR_BUFFER_SMALL: u32 = 0x1A;
+    /// What the resource calls return to a 32-bit process under WOW64.
+    const CR_CALL_NOT_IMPLEMENTED: u32 = 0x34;
     const CM_GETIDLIST_FILTER_ENUMERATOR: u32 = 0x1;
     const CM_GETIDLIST_FILTER_PRESENT: u32 = 0x100;
     const ALLOC_LOG_CONF: u32 = 0x2;
@@ -708,13 +727,16 @@ mod windows {
         }
     }
 
-    /// The memory ranges the OS assigned (`ALLOC_LOG_CONF`).
-    fn memory_ranges(inst: u32) -> Vec<Bar> {
+    /// The memory ranges the OS assigned (`ALLOC_LOG_CONF`), and whether
+    /// the OS hides them from this process (WOW64).
+    fn memory_ranges(inst: u32) -> (Vec<Bar>, bool) {
         let mut bars = Vec::new();
         let mut conf = 0usize;
         // SAFETY: out pointer alive.
-        if unsafe { CM_Get_First_Log_Conf(&raw mut conf, inst, ALLOC_LOG_CONF) } != CR_SUCCESS {
-            return bars;
+        match unsafe { CM_Get_First_Log_Conf(&raw mut conf, inst, ALLOC_LOG_CONF) } {
+            CR_SUCCESS => {}
+            CR_CALL_NOT_IMPLEMENTED => return (bars, true),
+            _ => return (bars, false),
         }
         let mut current = conf;
         loop {
@@ -739,7 +761,7 @@ mod windows {
         }
         // SAFETY: the log conf handle we own.
         unsafe { CM_Free_Log_Conf_Handle(conf) };
-        bars
+        (bars, false)
     }
 
     /// `MEM_DES` / `MEM_LARGE_DES`: count, type, `u64` base at 8, `u64`
@@ -844,16 +866,18 @@ mod windows {
                 _ => None,
             };
             let slot = slot_device(inst, vendor);
+            let (bars, ranges_hidden) = memory_ranges(inst);
             out.push(Gpu {
                 ids: pci::Gpu::from_pci(vendor, device),
                 address,
                 name: string_property(inst, &DEVICE_DESC),
-                bars: memory_ranges(inst),
+                bars,
                 link: link(slot, &PCI_CURRENT_LINK_SPEED, &PCI_CURRENT_LINK_WIDTH),
                 max_link: link(slot, &PCI_MAX_LINK_SPEED, &PCI_MAX_LINK_WIDTH),
                 behind_switch: slot != inst,
                 own_link: link(inst, &PCI_CURRENT_LINK_SPEED, &PCI_CURRENT_LINK_WIDTH),
                 vram: vram(inst),
+                ranges_hidden,
             });
         }
         out.sort_by_key(|g| g.address);
@@ -931,6 +955,7 @@ mod tests {
             behind_switch: true,
             own_link: Link::from_codes(1, 1),
             vram,
+            ranges_hidden: false,
         }
     }
 
@@ -973,6 +998,12 @@ mod tests {
             Some(vram),
         );
         assert_eq!(off.resizable_bar(), ResizableBar::Unknown);
+        let hidden = Gpu {
+            ranges_hidden: true,
+            ..gpu(Vec::new(), Some(12 << 30))
+        };
+        assert_eq!(hidden.resizable_bar(), ResizableBar::Hidden);
+        assert!(hidden.to_string().contains("hidden from this process"));
         assert_eq!(off.above_4g(), Some(false));
         // Linux, capable but off.
         let sizes = parse_resize_mask("7f00");

@@ -615,6 +615,24 @@ fn main() {
             }
             println!("  granted ({}): {}", granted.len(), granted.join(" "));
 
+            // With feature `directx`: what DXVK / vkd3d-proton could build on it.
+            #[cfg(feature = "directx")]
+            {
+                use numerobis::directx::modern::Capability as Dx;
+                use numerobis::directx::vulkan as dx;
+                let backed: Vec<&str> = Dx::ALL
+                    .iter()
+                    .filter(|&&c| dx::translatable(&plan, c) == Some(true))
+                    .map(|c| c.name())
+                    .collect();
+                println!(
+                    "  as a Direct3D translation target: feature level up to {}, backs {} capabilities: {}",
+                    dx::max_level(&plan),
+                    backed.len(),
+                    backed.join(" ")
+                );
+            }
+
             // The PCI side of the same card.
             match (info.bar(), plan.memory()) {
                 (Some(gpu), Some(memory)) => println!(

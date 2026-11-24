@@ -65,19 +65,6 @@ pub const INDEX_TYPE_UINT8: Spec = Spec {
     ],
 };
 
-pub const MESH_SHADER: Spec = Spec {
-    area: AREA,
-    support: Support::WINDOWS_TESTED,
-    needs: &[],
-    name: "mesh_shader",
-    doc: "mesh shaders (VK_EXT_mesh_shader); task shaders are a separate bit",
-    routes: &[ext(
-        c"VK_EXT_mesh_shader",
-        Some(Chain::MeshShader),
-        &["meshShader"],
-    )],
-};
-
 const DIVISOR: &[&str] = &["vertexAttributeInstanceRateDivisor"];
 
 pub const VERTEX_ATTRIBUTE_DIVISOR: Spec = Spec {

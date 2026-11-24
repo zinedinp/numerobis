@@ -272,10 +272,11 @@ struct RawProperties2 {
     properties: [u64; 128],
 }
 
-const _: () = assert!(std::mem::offset_of!(RawProperties2, properties) == 16);
-const _: () = assert!(size_of::<RawDriver>() == 536);
-const _: () = assert!(size_of::<RawPciBusInfo>() == 32);
-const _: () = assert!(size_of::<RawSubgroup>() == 32);
+// The C layouts; on 64-bit: 16, 536, 32, 32.
+const _: () = assert!(std::mem::offset_of!(RawProperties2, properties) == super::HEADER);
+const _: () = assert!(size_of::<RawDriver>() == super::HEADER + 4 + 2 * NAME_LEN + 4);
+const _: () = assert!(size_of::<RawPciBusInfo>() == super::HEADER + 16);
+const _: () = assert!(size_of::<RawSubgroup>() == super::HEADER + 16);
 
 /// Which structs the properties chain carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 //! Shader arithmetic and subgroups.
 
-use super::{Area, Route, Spec, Support, core, core10, ext};
+use super::{Area, Capability, Route, Spec, Support, core, core10, ext};
 use crate::vulkan::ApiVersion as V;
 use crate::vulkan::features::Chain;
 use crate::vulkan::subgroup;
@@ -163,4 +163,55 @@ pub const TESSELLATION_SHADER: Spec = Spec {
     name: "tessellation_shader",
     doc: "tessellation control and evaluation shaders",
     routes: &[core10(&["tessellationShader"])],
+};
+
+pub const FLOAT64: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[],
+    name: "float64",
+    doc: "64-bit floats in shaders",
+    routes: &[core10(&["shaderFloat64"])],
+};
+
+pub const ATOMIC_INT64: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[Capability::Int64],
+    name: "atomic_int64",
+    doc: "64-bit integer atomics on storage buffers",
+    routes: &[
+        core(V::V1_2, Chain::Vulkan12, &["shaderBufferInt64Atomics"]),
+        ext(
+            c"VK_KHR_shader_atomic_int64",
+            Some(Chain::ShaderAtomicInt64),
+            &["shaderBufferInt64Atomics"],
+        ),
+    ],
+};
+
+pub const IMAGE_ATOMIC_INT64: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[Capability::Int64],
+    name: "image_atomic_int64",
+    doc: "64-bit integer atomics on storage images (what sampler feedback builds on in vkd3d-proton)",
+    routes: &[ext(
+        c"VK_EXT_shader_image_atomic_int64",
+        Some(Chain::ShaderImageAtomicInt64),
+        &["shaderImageInt64Atomics"],
+    )],
+};
+
+pub const FRAGMENT_SHADER_BARYCENTRIC: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[],
+    name: "fragment_shader_barycentric",
+    doc: "barycentric coordinates and per-vertex inputs in fragment shaders",
+    routes: &[ext(
+        c"VK_KHR_fragment_shader_barycentric",
+        Some(Chain::FragmentShaderBarycentric),
+        &["fragmentShaderBarycentric"],
+    )],
 };

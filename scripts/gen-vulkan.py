@@ -80,6 +80,18 @@ CHAINS = [
     ("PresentWait", "VkPhysicalDevicePresentWaitFeaturesKHR"),
     ("PresentWait2", "VkPhysicalDevicePresentWait2FeaturesKHR"),
     ("GlobalPriorityQuery", "VkPhysicalDeviceGlobalPriorityQueryFeatures"),
+    ("AccelerationStructure", "VkPhysicalDeviceAccelerationStructureFeaturesKHR"),
+    ("RayTracingPipeline", "VkPhysicalDeviceRayTracingPipelineFeaturesKHR"),
+    ("RayQuery", "VkPhysicalDeviceRayQueryFeaturesKHR"),
+    ("RayTracingMaintenance1", "VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR"),
+    ("OpacityMicromap", "VkPhysicalDeviceOpacityMicromapFeaturesKHR"),
+    ("OpacityMicromapExt", "VkPhysicalDeviceOpacityMicromapFeaturesEXT"),
+    ("RayTracingInvocationReorder", "VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT"),
+    ("FragmentShadingRate", "VkPhysicalDeviceFragmentShadingRateFeaturesKHR"),
+    ("FragmentShaderBarycentric", "VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR"),
+    ("FragmentShaderInterlock", "VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT"),
+    ("ShaderAtomicInt64", "VkPhysicalDeviceShaderAtomicInt64Features"),
+    ("ShaderImageAtomicInt64", "VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT"),
 ]
 
 # Property, query and create-info structs numerobis fills: their sType values.

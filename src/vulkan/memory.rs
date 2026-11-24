@@ -71,12 +71,13 @@ struct RawBudget {
     usage: [u64; MAX_HEAPS],
 }
 
-// The C layouts (64-bit): VkMemoryHeap is 16 bytes, the properties 520.
+// The C layouts: VkMemoryHeap is 16 bytes, the properties 520 (no
+// pointers, the same on 32-bit); the chained structs grow with `HEADER`.
 const _: () = assert!(size_of::<RawHeap>() == 16);
 const _: () = assert!(size_of::<RawMemoryProperties>() == 520);
 const _: () = assert!(std::mem::offset_of!(RawMemoryProperties, heaps) == 264);
-const _: () = assert!(std::mem::offset_of!(RawMemoryProperties2, properties) == 16);
-const _: () = assert!(size_of::<RawBudget>() == 16 + 2 * 8 * MAX_HEAPS);
+const _: () = assert!(std::mem::offset_of!(RawMemoryProperties2, properties) == super::HEADER);
+const _: () = assert!(size_of::<RawBudget>() == super::HEADER + 2 * 8 * MAX_HEAPS);
 
 /// A `VkPhysicalDeviceMemoryProperties2` with the budget struct behind it,
 /// to fill as often as needed (`vkGetPhysicalDeviceMemoryProperties2` is
@@ -383,25 +384,7 @@ impl BudgetCache {
     }
 }
 
-/// `bytes` with a binary unit, for logs (`11.83 GiB`, `256 MiB`).
-#[must_use]
-pub fn bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut unit = 0;
-    let mut whole = bytes;
-    while whole >= 1024 && unit + 1 < UNITS.len() {
-        whole /= 1024;
-        unit += 1;
-    }
-    let exact = bytes.is_multiple_of(1 << (10 * unit));
-    if exact {
-        format!("{whole} {}", UNITS[unit])
-    } else {
-        #[allow(clippy::cast_precision_loss, reason = "two decimals for a log")]
-        let v = bytes as f64 / (1u64 << (10 * unit)) as f64;
-        format!("{v:.2} {}", UNITS[unit])
-    }
-}
+pub use crate::pci::bytes;
 
 impl fmt::Display for Memory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

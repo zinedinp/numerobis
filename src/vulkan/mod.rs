@@ -62,6 +62,11 @@ pub use memory::{BudgetCache, Memory, MemoryQuery};
 pub use plan::{BitError, DeviceChain, FeatureQuery, Offer, Outcome, Plan, Probe, Skip, Verdict};
 pub use priority::GlobalPriority;
 
+/// `sType` and `pNext` at the head of every chained struct, with the
+/// padding before `pNext`: 16 bytes on 64-bit targets, 8 on 32-bit. The
+/// layout checks are written with it, so they hold on both.
+pub(crate) const HEADER: usize = 2 * size_of::<*const std::ffi::c_void>();
+
 /// A Vulkan version (`VK_MAKE_API_VERSION` without the variant).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ApiVersion {

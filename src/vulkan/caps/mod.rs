@@ -13,8 +13,10 @@ pub mod descriptor;
 pub mod draw;
 pub mod interop;
 pub mod memory;
+pub mod mesh;
 pub mod pipeline;
 pub mod present;
+pub mod raytracing;
 pub mod render;
 pub mod shader;
 pub mod sync;
@@ -52,6 +54,8 @@ pub enum Route {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Area {
     Draw,
+    Mesh,
+    RayTracing,
     Memory,
     Shader,
     Compute,
@@ -68,6 +72,8 @@ impl Area {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Draw => "draw",
+            Self::Mesh => "mesh",
+            Self::RayTracing => "ray tracing",
             Self::Memory => "memory",
             Self::Shader => "shader",
             Self::Compute => "compute",
@@ -131,8 +137,18 @@ capabilities! {
     ShaderDrawParameters => draw::SHADER_DRAW_PARAMETERS,
     DrawIndirectCount => draw::DRAW_INDIRECT_COUNT,
     IndexTypeUint8 => draw::INDEX_TYPE_UINT8,
-    MeshShader => draw::MESH_SHADER,
     VertexAttributeDivisor => draw::VERTEX_ATTRIBUTE_DIVISOR,
+    // Mesh.
+    MeshShader => mesh::MESH_SHADER,
+    TaskShader => mesh::TASK_SHADER,
+    // Ray tracing.
+    AccelerationStructure => raytracing::ACCELERATION_STRUCTURE,
+    RayTracingPipeline => raytracing::RAY_TRACING_PIPELINE,
+    RayTraversalPrimitiveCulling => raytracing::RAY_TRAVERSAL_PRIMITIVE_CULLING,
+    RayQuery => raytracing::RAY_QUERY,
+    RayTracingMaintenance1 => raytracing::RAY_TRACING_MAINTENANCE1,
+    OpacityMicromap => raytracing::OPACITY_MICROMAP,
+    RayTracingInvocationReorder => raytracing::RAY_TRACING_INVOCATION_REORDER,
     // Memory.
     RobustBufferAccess => memory::ROBUST_BUFFER_ACCESS,
     Storage16Bit => memory::STORAGE_16BIT,
@@ -143,6 +159,7 @@ capabilities! {
     PageableDeviceLocalMemory => memory::PAGEABLE_DEVICE_LOCAL_MEMORY,
     MemoryBudget => memory::MEMORY_BUDGET,
     HostImageCopy => memory::HOST_IMAGE_COPY,
+    SparseResidency => memory::SPARSE_RESIDENCY,
     // Shader.
     Int16 => shader::INT16,
     Int64 => shader::INT64,
@@ -157,6 +174,10 @@ capabilities! {
     IntegerDotProduct => shader::INTEGER_DOT_PRODUCT,
     GeometryShader => shader::GEOMETRY_SHADER,
     TessellationShader => shader::TESSELLATION_SHADER,
+    Float64 => shader::FLOAT64,
+    AtomicInt64 => shader::ATOMIC_INT64,
+    ImageAtomicInt64 => shader::IMAGE_ATOMIC_INT64,
+    FragmentShaderBarycentric => shader::FRAGMENT_SHADER_BARYCENTRIC,
     // Compute.
     VulkanMemoryModel => compute::VULKAN_MEMORY_MODEL,
     CooperativeMatrix => compute::COOPERATIVE_MATRIX,
@@ -197,6 +218,13 @@ capabilities! {
     FillModeNonSolid => render::FILL_MODE_NON_SOLID,
     DepthClamp => render::DEPTH_CLAMP,
     WideLines => render::WIDE_LINES,
+    DepthBounds => render::DEPTH_BOUNDS,
+    LogicOp => render::LOGIC_OP,
+    Multiview => render::MULTIVIEW,
+    FragmentShadingRate => render::FRAGMENT_SHADING_RATE,
+    FragmentShadingRateAttachment => render::FRAGMENT_SHADING_RATE_ATTACHMENT,
+    FragmentShaderInterlock => render::FRAGMENT_SHADER_INTERLOCK,
+    ConservativeRasterization => render::CONSERVATIVE_RASTERIZATION,
     // Present.
     FifoLatestReady => present::FIFO_LATEST_READY,
     PresentId => present::PRESENT_ID,

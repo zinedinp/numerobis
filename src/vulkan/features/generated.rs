@@ -110,6 +110,30 @@ pub enum Chain {
     PresentWait2,
     /// `VkPhysicalDeviceGlobalPriorityQueryFeatures`: core 1.4, before that `VK_KHR_global_priority`, `VK_EXT_global_priority_query`; part of `Vulkan14` from 1.4.
     GlobalPriorityQuery,
+    /// `VkPhysicalDeviceAccelerationStructureFeaturesKHR` (`VK_KHR_acceleration_structure`).
+    AccelerationStructure,
+    /// `VkPhysicalDeviceRayTracingPipelineFeaturesKHR` (`VK_KHR_ray_tracing_pipeline`).
+    RayTracingPipeline,
+    /// `VkPhysicalDeviceRayQueryFeaturesKHR` (`VK_KHR_ray_query`).
+    RayQuery,
+    /// `VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR` (`VK_KHR_ray_tracing_maintenance1`).
+    RayTracingMaintenance1,
+    /// `VkPhysicalDeviceOpacityMicromapFeaturesKHR` (`VK_KHR_opacity_micromap`).
+    OpacityMicromap,
+    /// `VkPhysicalDeviceOpacityMicromapFeaturesEXT` (`VK_EXT_opacity_micromap`).
+    OpacityMicromapExt,
+    /// `VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT` (`VK_EXT_ray_tracing_invocation_reorder`).
+    RayTracingInvocationReorder,
+    /// `VkPhysicalDeviceFragmentShadingRateFeaturesKHR` (`VK_KHR_fragment_shading_rate`).
+    FragmentShadingRate,
+    /// `VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR` (`VK_KHR_fragment_shader_barycentric`, `VK_NV_fragment_shader_barycentric`).
+    FragmentShaderBarycentric,
+    /// `VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT` (`VK_EXT_fragment_shader_interlock`).
+    FragmentShaderInterlock,
+    /// `VkPhysicalDeviceShaderAtomicInt64Features`: core 1.2, before that `VK_KHR_shader_atomic_int64`; part of `Vulkan12` from 1.2.
+    ShaderAtomicInt64,
+    /// `VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT` (`VK_EXT_shader_image_atomic_int64`).
+    ShaderImageAtomicInt64,
 }
 
 impl Chain {
@@ -165,6 +189,18 @@ impl Chain {
         Self::PresentWait,
         Self::PresentWait2,
         Self::GlobalPriorityQuery,
+        Self::AccelerationStructure,
+        Self::RayTracingPipeline,
+        Self::RayQuery,
+        Self::RayTracingMaintenance1,
+        Self::OpacityMicromap,
+        Self::OpacityMicromapExt,
+        Self::RayTracingInvocationReorder,
+        Self::FragmentShadingRate,
+        Self::FragmentShaderBarycentric,
+        Self::FragmentShaderInterlock,
+        Self::ShaderAtomicInt64,
+        Self::ShaderImageAtomicInt64,
     ];
 
     /// The struct's `VkStructureType` value.
@@ -221,6 +257,18 @@ impl Chain {
             Self::PresentWait => 1_000_248_000,
             Self::PresentWait2 => 1_000_480_001,
             Self::GlobalPriorityQuery => 1_000_388_000,
+            Self::AccelerationStructure => 1_000_150_013,
+            Self::RayTracingPipeline => 1_000_347_000,
+            Self::RayQuery => 1_000_348_013,
+            Self::RayTracingMaintenance1 => 1_000_386_000,
+            Self::OpacityMicromap => 1_000_623_000,
+            Self::OpacityMicromapExt => 1_000_396_005,
+            Self::RayTracingInvocationReorder => 1_000_581_000,
+            Self::FragmentShadingRate => 1_000_226_003,
+            Self::FragmentShaderBarycentric => 1_000_203_000,
+            Self::FragmentShaderInterlock => 1_000_251_000,
+            Self::ShaderAtomicInt64 => 1_000_180_000,
+            Self::ShaderImageAtomicInt64 => 1_000_234_000,
         }
     }
 
@@ -282,6 +330,22 @@ impl Chain {
             Self::PresentWait => "VkPhysicalDevicePresentWaitFeaturesKHR",
             Self::PresentWait2 => "VkPhysicalDevicePresentWait2FeaturesKHR",
             Self::GlobalPriorityQuery => "VkPhysicalDeviceGlobalPriorityQueryFeatures",
+            Self::AccelerationStructure => "VkPhysicalDeviceAccelerationStructureFeaturesKHR",
+            Self::RayTracingPipeline => "VkPhysicalDeviceRayTracingPipelineFeaturesKHR",
+            Self::RayQuery => "VkPhysicalDeviceRayQueryFeaturesKHR",
+            Self::RayTracingMaintenance1 => "VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR",
+            Self::OpacityMicromap => "VkPhysicalDeviceOpacityMicromapFeaturesKHR",
+            Self::OpacityMicromapExt => "VkPhysicalDeviceOpacityMicromapFeaturesEXT",
+            Self::RayTracingInvocationReorder => {
+                "VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT"
+            }
+            Self::FragmentShadingRate => "VkPhysicalDeviceFragmentShadingRateFeaturesKHR",
+            Self::FragmentShaderBarycentric => {
+                "VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR"
+            }
+            Self::FragmentShaderInterlock => "VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT",
+            Self::ShaderAtomicInt64 => "VkPhysicalDeviceShaderAtomicInt64Features",
+            Self::ShaderImageAtomicInt64 => "VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT",
         }
     }
 
@@ -339,6 +403,18 @@ impl Chain {
             Self::PresentWait => PRESENT_WAIT_FIELDS,
             Self::PresentWait2 => PRESENT_WAIT2_FIELDS,
             Self::GlobalPriorityQuery => GLOBAL_PRIORITY_QUERY_FIELDS,
+            Self::AccelerationStructure => ACCELERATION_STRUCTURE_FIELDS,
+            Self::RayTracingPipeline => RAY_TRACING_PIPELINE_FIELDS,
+            Self::RayQuery => RAY_QUERY_FIELDS,
+            Self::RayTracingMaintenance1 => RAY_TRACING_MAINTENANCE1_FIELDS,
+            Self::OpacityMicromap => OPACITY_MICROMAP_FIELDS,
+            Self::OpacityMicromapExt => OPACITY_MICROMAP_EXT_FIELDS,
+            Self::RayTracingInvocationReorder => RAY_TRACING_INVOCATION_REORDER_FIELDS,
+            Self::FragmentShadingRate => FRAGMENT_SHADING_RATE_FIELDS,
+            Self::FragmentShaderBarycentric => FRAGMENT_SHADER_BARYCENTRIC_FIELDS,
+            Self::FragmentShaderInterlock => FRAGMENT_SHADER_INTERLOCK_FIELDS,
+            Self::ShaderAtomicInt64 => SHADER_ATOMIC_INT64_FIELDS,
+            Self::ShaderImageAtomicInt64 => SHADER_IMAGE_ATOMIC_INT64_FIELDS,
         }
     }
 
@@ -374,7 +450,8 @@ impl Chain {
             | Self::ScalarBlockLayout
             | Self::TimelineSemaphore
             | Self::HostQueryReset
-            | Self::VulkanMemoryModel => Some((ApiVersion::V1_2, Self::Vulkan12)),
+            | Self::VulkanMemoryModel
+            | Self::ShaderAtomicInt64 => Some((ApiVersion::V1_2, Self::Vulkan12)),
             Self::Synchronization2
             | Self::SubgroupSizeControl
             | Self::DemoteToHelperInvocation
@@ -899,6 +976,59 @@ const PRESENT_WAIT2_FIELDS: &[Field] = &[f("presentWait2")];
 
 const GLOBAL_PRIORITY_QUERY_FIELDS: &[Field] = &[f("globalPriorityQuery")];
 
+const ACCELERATION_STRUCTURE_FIELDS: &[Field] = &[
+    f("accelerationStructure"),
+    f("accelerationStructureCaptureReplay"),
+    f("accelerationStructureIndirectBuild"),
+    f("accelerationStructureHostCommands"),
+    f("descriptorBindingAccelerationStructureUpdateAfterBind"),
+];
+
+const RAY_TRACING_PIPELINE_FIELDS: &[Field] = &[
+    f("rayTracingPipeline"),
+    f("rayTracingPipelineShaderGroupHandleCaptureReplay"),
+    f("rayTracingPipelineShaderGroupHandleCaptureReplayMixed"),
+    f("rayTracingPipelineTraceRaysIndirect"),
+    f("rayTraversalPrimitiveCulling"),
+];
+
+const RAY_QUERY_FIELDS: &[Field] = &[f("rayQuery")];
+
+const RAY_TRACING_MAINTENANCE1_FIELDS: &[Field] = &[
+    f("rayTracingMaintenance1"),
+    f("rayTracingPipelineTraceRaysIndirect2"),
+];
+
+const OPACITY_MICROMAP_FIELDS: &[Field] = &[f("micromap")];
+
+const OPACITY_MICROMAP_EXT_FIELDS: &[Field] = &[
+    f("micromap"),
+    f("micromapCaptureReplay"),
+    f("micromapHostCommands"),
+];
+
+const RAY_TRACING_INVOCATION_REORDER_FIELDS: &[Field] = &[f("rayTracingInvocationReorder")];
+
+const FRAGMENT_SHADING_RATE_FIELDS: &[Field] = &[
+    f("pipelineFragmentShadingRate"),
+    f("primitiveFragmentShadingRate"),
+    f("attachmentFragmentShadingRate"),
+];
+
+const FRAGMENT_SHADER_BARYCENTRIC_FIELDS: &[Field] = &[f("fragmentShaderBarycentric")];
+
+const FRAGMENT_SHADER_INTERLOCK_FIELDS: &[Field] = &[
+    f("fragmentShaderSampleInterlock"),
+    f("fragmentShaderPixelInterlock"),
+    f("fragmentShaderShadingRateInterlock"),
+];
+
+const SHADER_ATOMIC_INT64_FIELDS: &[Field] =
+    &[f("shaderBufferInt64Atomics"), f("shaderSharedInt64Atomics")];
+
+const SHADER_IMAGE_ATOMIC_INT64_FIELDS: &[Field] =
+    &[f("shaderImageInt64Atomics"), f("sparseImageInt64Atomics")];
+
 /// The extensions Vulkan 1.1 made core.
 const PROMOTED_1_1: &[&CStr] = &[
     c"VK_KHR_16bit_storage",
@@ -1011,6 +1141,13 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
             Depends::Version(ApiVersion::V1_1),
         ]),
     ),
+    (
+        c"VK_EXT_conservative_rasterization",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
     (c"VK_EXT_debug_utils", Depends::All(&[])),
     (
         c"VK_EXT_descriptor_buffer",
@@ -1059,6 +1196,13 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     (
         c"VK_EXT_external_memory_dma_buf",
         Depends::Extension(c"VK_KHR_external_memory_fd"),
+    ),
+    (
+        c"VK_EXT_fragment_shader_interlock",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
     ),
     (c"VK_EXT_global_priority", Depends::All(&[])),
     (
@@ -1148,6 +1292,16 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
         ]),
     ),
     (
+        c"VK_EXT_opacity_micromap",
+        Depends::All(&[
+            Depends::Extension(c"VK_KHR_acceleration_structure"),
+            Depends::Any(&[
+                Depends::Extension(c"VK_KHR_synchronization2"),
+                Depends::Version(ApiVersion::V1_3),
+            ]),
+        ]),
+    ),
+    (
         c"VK_EXT_pageable_device_local_memory",
         Depends::Extension(c"VK_EXT_memory_priority"),
     ),
@@ -1161,6 +1315,10 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     (
         c"VK_EXT_present_mode_fifo_latest_ready",
         Depends::Extension(c"VK_KHR_swapchain"),
+    ),
+    (
+        c"VK_EXT_ray_tracing_invocation_reorder",
+        Depends::Extension(c"VK_KHR_ray_tracing_pipeline"),
     ),
     (
         c"VK_EXT_robustness2",
@@ -1192,6 +1350,13 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     ),
     (
         c"VK_EXT_shader_float8",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_shader_image_atomic_int64",
         Depends::Any(&[
             Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
             Depends::Version(ApiVersion::V1_1),
@@ -1248,6 +1413,20 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
             Depends::Version(ApiVersion::V1_1),
         ]),
     ),
+    (
+        c"VK_KHR_acceleration_structure",
+        Depends::All(&[
+            Depends::Any(&[
+                Depends::All(&[
+                    Depends::Version(ApiVersion::V1_1),
+                    Depends::Extension(c"VK_EXT_descriptor_indexing"),
+                    Depends::Extension(c"VK_KHR_buffer_device_address"),
+                ]),
+                Depends::Version(ApiVersion::V1_2),
+            ]),
+            Depends::Extension(c"VK_KHR_deferred_host_operations"),
+        ]),
+    ),
     (c"VK_KHR_bind_memory2", Depends::All(&[])),
     (
         c"VK_KHR_buffer_device_address",
@@ -1290,11 +1469,32 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
             Depends::Version(ApiVersion::V1_1),
         ]),
     ),
+    (c"VK_KHR_deferred_host_operations", Depends::All(&[])),
     (
         c"VK_KHR_depth_stencil_resolve",
         Depends::Any(&[
             Depends::Extension(c"VK_KHR_create_renderpass2"),
             Depends::Version(ApiVersion::V1_2),
+        ]),
+    ),
+    (
+        c"VK_KHR_device_address_commands",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Any(&[
+                    Depends::All(&[
+                        Depends::Any(&[
+                            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                            Depends::Version(ApiVersion::V1_1),
+                        ]),
+                        Depends::Extension(c"VK_KHR_buffer_device_address"),
+                    ]),
+                    Depends::Version(ApiVersion::V1_2),
+                ]),
+                Depends::Extension(c"VK_KHR_synchronization2"),
+                Depends::Extension(c"VK_EXT_extended_dynamic_state"),
+            ]),
+            Depends::Version(ApiVersion::V1_3),
         ]),
     ),
     (
@@ -1387,6 +1587,26 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
             Depends::Version(ApiVersion::V1_1),
         ]),
     ),
+    (
+        c"VK_KHR_fragment_shader_barycentric",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_fragment_shading_rate",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Any(&[
+                    Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                    Depends::Version(ApiVersion::V1_1),
+                ]),
+                Depends::Extension(c"VK_KHR_create_renderpass2"),
+            ]),
+            Depends::Version(ApiVersion::V1_2),
+        ]),
+    ),
     (c"VK_KHR_get_memory_requirements2", Depends::All(&[])),
     (c"VK_KHR_get_physical_device_properties2", Depends::All(&[])),
     (
@@ -1434,6 +1654,13 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
         Depends::Any(&[
             Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
             Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_opacity_micromap",
+        Depends::All(&[
+            Depends::Extension(c"VK_KHR_acceleration_structure"),
+            Depends::Extension(c"VK_KHR_device_address_commands"),
         ]),
     ),
     (c"VK_KHR_pipeline_library", Depends::All(&[])),
@@ -1491,6 +1718,30 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
         ]),
     ),
     (
+        c"VK_KHR_ray_query",
+        Depends::All(&[
+            Depends::Any(&[
+                Depends::Extension(c"VK_KHR_spirv_1_4"),
+                Depends::Version(ApiVersion::V1_2),
+            ]),
+            Depends::Extension(c"VK_KHR_acceleration_structure"),
+        ]),
+    ),
+    (
+        c"VK_KHR_ray_tracing_maintenance1",
+        Depends::Extension(c"VK_KHR_acceleration_structure"),
+    ),
+    (
+        c"VK_KHR_ray_tracing_pipeline",
+        Depends::All(&[
+            Depends::Any(&[
+                Depends::Extension(c"VK_KHR_spirv_1_4"),
+                Depends::Version(ApiVersion::V1_2),
+            ]),
+            Depends::Extension(c"VK_KHR_acceleration_structure"),
+        ]),
+    ),
+    (
         c"VK_KHR_robustness2",
         Depends::Any(&[
             Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
@@ -1506,6 +1757,13 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
                 Depends::Extension(c"VK_KHR_get_memory_requirements2"),
                 Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
             ]),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_shader_atomic_int64",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
             Depends::Version(ApiVersion::V1_1),
         ]),
     ),

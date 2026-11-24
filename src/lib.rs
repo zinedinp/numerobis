@@ -29,7 +29,22 @@
 //! | [`loader`] | kernel binary containers (ELF) |
 //! | [`pci`] | which GPU a PCI vendor/device id is, its driver version, and [`pci::bar`]: PCIe link, BAR aperture, resizable BAR (sysfs / cfgmgr32) |
 //! | [`platform`] | per OS: tested, untested or unavailable |
-//! | [`vulkan`] | Vulkan versions, feature bits per version, and a waterfall picking each capability's best route: no bindings, the host calls Vulkan |
+#![cfg_attr(
+    feature = "vulkan",
+    doc = "| [`vulkan`] | feature `vulkan`: Vulkan versions, feature bits per version, and a waterfall picking each capability's best route: no bindings, the host calls Vulkan |"
+)]
+#![cfg_attr(
+    not(feature = "vulkan"),
+    doc = "| `vulkan` | feature `vulkan`: Vulkan versions, feature bits, the capability waterfall |"
+)]
+#![cfg_attr(
+    feature = "directx",
+    doc = "| [`directx`] | feature `directx`: Direct3D 8 to 12, legacy (8, 9: caps bits) and modern (10 to 12: feature levels, `CheckFeatureSupport`) kept apart; no bindings either |"
+)]
+#![cfg_attr(
+    not(feature = "directx"),
+    doc = "| `directx` | feature `directx`: Direct3D 8 to 12 capabilities, legacy and modern apart |"
+)]
 //! | `mock` | host oracle backend (feature `mock`) |
 //!
 //! ```
@@ -56,6 +71,8 @@ pub mod elem;
 
 pub mod auto_down;
 pub mod auto_up;
+#[cfg(feature = "directx")]
+pub mod directx;
 pub mod engine;
 pub mod loader;
 #[cfg(feature = "mock")]
@@ -65,6 +82,7 @@ pub mod pci;
 pub mod platform;
 pub mod runtime;
 pub mod tiers;
+#[cfg(feature = "vulkan")]
 pub mod vulkan;
 
 // Vendors.

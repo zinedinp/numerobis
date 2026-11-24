@@ -437,7 +437,7 @@ fn missing_dependencies_and_versions_are_logged() {
     );
     assert!(
         plan.to_string()
-            .contains("- draw.mesh_shader: no route [skipped VK_EXT_mesh_shader (VkPhysicalDeviceMeshShaderFeaturesEXT.meshShader): needs VK_KHR_spirv_1_4]"),
+            .contains("- mesh.mesh_shader: no route [skipped VK_EXT_mesh_shader (VkPhysicalDeviceMeshShaderFeaturesEXT.meshShader): needs VK_KHR_spirv_1_4]"),
         "{plan}"
     );
 }
@@ -1026,7 +1026,7 @@ fn quirks_turn_a_granted_capability_off() {
 unsafe fn write_properties(probe: &mut Probe, kind: u32, vendor: u32, device: u32, name: &[u8]) {
     // SAFETY: the probe owns the chain; offsets of VkPhysicalDeviceProperties.
     unsafe {
-        let props = probe.properties2().cast::<u8>().add(16);
+        let props = probe.properties2().cast::<u8>().add(super::HEADER);
         for (at, v) in [
             (0, V::V1_3.raw()),
             (4, (101 << 14) + 9175),
