@@ -7,19 +7,19 @@ use numerobis::Device;
 fn main() {
     #[allow(unused_mut)]
     let mut devices = Device::all();
-    #[cfg(feature = "nvidia")]
+    #[cfg(all(feature = "nvidia", target_os = "linux"))]
     for r in numerobis::nvidia::backend::probe() {
         if let Err(e) = r {
             println!("nvidia: {e}");
         }
     }
-    #[cfg(feature = "amd")]
+    #[cfg(all(feature = "amd", target_os = "linux"))]
     for r in numerobis::amd::backend::probe() {
         if let Err(e) = r {
             println!("amd: {e}");
         }
     }
-    #[cfg(feature = "tt")]
+    #[cfg(all(feature = "tt", target_os = "linux"))]
     for r in numerobis::tt::backend::probe() {
         if let Err(e) = r {
             println!("tt: {e}");
