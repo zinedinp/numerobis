@@ -7,6 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #include "../src/all.cl"
 
@@ -38,6 +42,12 @@ static uint rd_u32(void) {
 #define F(i) nb_u2f(a[i].v)
 
 int main(void) {
+#if defined(_WIN32)
+    /* The CRT opens both in text mode: 0x0A would gain a 0x0D, 0x1A end
+     * the input. */
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     char name[64] = {0};
     uint nl = rd_u32();
     if (nl >= sizeof name) return 2;

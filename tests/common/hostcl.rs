@@ -21,11 +21,39 @@ use numerobis::runtime::abi::{Launch, lower};
 use numerobis::runtime::{Arg, Backend, BufId, Fence, KernelId, KernelKey, OpSig};
 use numerobis::{Device, Error, Result, Tier};
 
+/// `clang` from the `PATH`; on Windows, without one there, the one where the
+/// LLVM installer puts it (`%ProgramFiles%\LLVM\bin`), since the installer
+/// leaves the `PATH` alone by default.
+pub fn clang() -> String {
+    static CLANG: OnceLock<String> = OnceLock::new();
+    CLANG
+        .get_or_init(|| {
+            let on_path = Command::new("clang")
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !on_path && cfg!(windows) {
+                let installed = std::env::var_os("ProgramFiles")
+                    .map(|p| PathBuf::from(p).join(r"LLVM\bin\clang.exe"))
+                    .filter(|p| p.is_file());
+                if let Some(p) = installed {
+                    return p.display().to_string();
+                }
+            }
+            "clang".into()
+        })
+        .clone()
+}
+
+/// The host C compiler: `$CC`, else [`clang`].
+pub fn cc() -> String {
+    std::env::var("CC").unwrap_or_else(|_| clang())
+}
+
 fn build(cc: &str, args: &[&str], what: &str) {
-    let out = Command::new(cc)
-        .args(args)
-        .output()
-        .unwrap_or_else(|e| panic!("cannot run {cc} to build the {what}: {e}"));
+    let out = Command::new(cc).args(args).output().unwrap_or_else(|e| {
+        panic!("cannot run {cc} to build the {what}: {e} (install LLVM, or set CC)")
+    });
     assert!(
         out.status.success(),
         "{what} build failed:\n{}",
@@ -45,7 +73,7 @@ fn rv32_driver() -> &'static PathBuf {
             root.join("kernels/tt/softfloat.c"),
         );
         build(
-            "clang",
+            &clang(),
             &[
                 "--target=riscv32-unknown-linux-gnu",
                 "-march=rv32im",
@@ -89,32 +117,37 @@ fn driver() -> &'static PathBuf {
     static EXE: OnceLock<PathBuf> = OnceLock::new();
     EXE.get_or_init(|| {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("nb-host-driver-{}", std::process::id()));
-        let cc = std::env::var("CC").unwrap_or_else(|_| "clang".into());
+        // With the suffix: on Windows `Command` appends `.exe` to a path
+        // without an extension.
+        let exe = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "nb-host-driver-{}{}",
+            std::process::id(),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let cc = cc();
         let (inc, drv) = (
             root.join("kernels/include"),
             root.join("kernels/host/driver.c"),
         );
-        build(
-            &cc,
-            &[
-                "-std=c11",
-                "-O1",
-                "-ffp-contract=off",
-                "-DNB_HOST",
-                "-Wall",
-                "-Werror",
-                "-Wno-unused-function",
-                "-I",
-                inc.to_str().unwrap(),
-                drv.to_str().unwrap(),
-                "-o",
-                exe.to_str().unwrap(),
-                "-lm",
-            ],
-            "host kernel driver",
-        );
+        let mut args = vec![
+            "-std=c11",
+            "-O1",
+            "-ffp-contract=off",
+            "-DNB_HOST",
+            "-Wall",
+            "-Werror",
+            "-Wno-unused-function",
+            "-I",
+            inc.to_str().unwrap(),
+            drv.to_str().unwrap(),
+            "-o",
+            exe.to_str().unwrap(),
+        ];
+        // The MSVC C runtime has the math functions built in; no libm.
+        if !cfg!(target_env = "msvc") {
+            args.push("-lm");
+        }
+        build(&cc, &args, "host kernel driver");
         exe
     })
 }

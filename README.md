@@ -594,8 +594,11 @@ The suite runs every op on every target and compares with the mock reference:
 random cases including subnormals and specials. `tests/binaries.rs` checks
 that the checked-in kernel binaries export every kernel and need no linking.
 
-The `host-cl` tests build a small driver with `clang`; without `clang` on the
-`PATH` they fail with "cannot run clang". Against real drivers, without a
+The `host-cl` tests and `tests/softfloat.rs` build a small driver with `clang`
+(or `$CC`); without one they fail with "cannot run clang". On Windows the
+LLVM release works as it is (`winget install LLVM.LLVM`): the tests find it
+in `%ProgramFiles%\LLVM\bin` when it is not on the `PATH`. The rv32 variants also need
+`qemu-riscv32` and are skipped without it. Against real drivers, without a
 backend feature:
 
 ```sh
