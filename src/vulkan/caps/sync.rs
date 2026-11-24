@@ -8,7 +8,7 @@ const AREA: Area = Area::Sync;
 
 pub const TIMELINE_SEMAPHORE: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "timeline_semaphore",
     doc: "semaphores with a 64-bit counter, waitable from the host",
@@ -24,7 +24,7 @@ pub const TIMELINE_SEMAPHORE: Spec = Spec {
 
 pub const SYNCHRONIZATION2: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "synchronization2",
     doc: "vkCmdPipelineBarrier2 and vkQueueSubmit2",
@@ -40,7 +40,7 @@ pub const SYNCHRONIZATION2: Spec = Spec {
 
 pub const HOST_QUERY_RESET: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "host_query_reset",
     doc: "vkResetQueryPool from the CPU, no reset commands",
@@ -56,7 +56,7 @@ pub const HOST_QUERY_RESET: Spec = Spec {
 
 pub const PIPELINE_STATISTICS: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "pipeline_statistics",
     doc: "pipeline statistics queries",
@@ -65,7 +65,7 @@ pub const PIPELINE_STATISTICS: Spec = Spec {
 
 pub const CALIBRATED_TIMESTAMPS: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "calibrated_timestamps",
     doc: "GPU timestamps next to a host clock reading (frame pacing, profiling)",
@@ -77,7 +77,7 @@ pub const CALIBRATED_TIMESTAMPS: Spec = Spec {
 
 pub const GLOBAL_PRIORITY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "global_priority",
     doc: "a queue's priority against other processes on the GPU (low to realtime)",
@@ -90,7 +90,7 @@ pub const GLOBAL_PRIORITY: Spec = Spec {
 
 pub const GLOBAL_PRIORITY_QUERY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::GlobalPriority],
     name: "global_priority_query",
     doc: "which priorities each queue family allows (VkQueueFamilyGlobalPriorityProperties)",

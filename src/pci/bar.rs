@@ -4,15 +4,23 @@
 //!
 //! - **Linux**: sysfs (`/sys/bus/pci/devices/*`): `resource`,
 //!   `resource<N>_resize`, `current_link_*` / `max_link_*`, `amdgpu`'s
-//!   `mem_info_vram_total`. Untested: the parsers are unit-tested, the
-//!   reading never ran on a real system ([`SUPPORT`]).
+//!   `mem_info_vram_total` / `mem_info_vis_vram_total` /
+//!   `mem_info_gtt_total`. Run on an AMD Radeon 680M (integrated, amdgpu).
 //! - **Windows**: the configuration manager (`cfgmgr32`): the memory ranges
 //!   the OS assigned, `DEVPKEY_PciDevice_*Link*`, and the VRAM size from the
 //!   display driver's registry key. Run on an Intel Arc B580.
 //!
 //! Cards with a PCIe switch on board (Intel Arc, recent AMD) show a x1 link
 //! on the GPU itself; [`Gpu::link`] is the switch's upstream link, the one in
-//! the slot. Vulkan tells the CPU-visible VRAM from its side with
+//! the slot.
+//!
+//! An integrated GPU ([`Gpu::integrated`]) has BARs and a link too, but
+//! neither means what it does on a card: its "VRAM" is a carve-out of system
+//! RAM the CPU reaches directly, and the link is internal to the `SoC`. It
+//! reports [`ResizableBar::Integrated`] and all of that carve-out as
+//! CPU-visible.
+//!
+//! Vulkan tells the CPU-visible VRAM from its side with
 //! `vulkan::Memory` (and DirectX with
 //! `directx::modern::VideoMemory`).
 
@@ -23,8 +31,9 @@ use std::sync::OnceLock;
 use super::{PciAddress, bytes};
 use crate::platform::{Status, Support};
 
-/// Where this was run: Windows (Intel Arc B580); Linux untested.
-pub const SUPPORT: Support = Support::new(Status::Untested, Status::Tested);
+/// Where this was run: Windows (Intel Arc B580), Linux (AMD Radeon 680M,
+/// integrated).
+pub const SUPPORT: Support = Support::new(Status::Tested, Status::Tested);
 
 /// The aperture of a discrete GPU without resizable BAR.
 pub const LEGACY_APERTURE: u64 = 256 << 20;
@@ -151,6 +160,22 @@ pub enum ResizableBar {
     /// The OS doesn't show this process the ranges at all
     /// ([`Gpu::ranges_hidden`]).
     Hidden,
+    /// An integrated GPU: no aperture to resize, the CPU reaches its memory
+    /// directly ([`Gpu::integrated`]).
+    Integrated,
+}
+
+impl fmt::Display for ResizableBar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Active => f.write_str("active"),
+            Self::Inactive { max } => write!(f, "capable up to {}, not active", bytes(max)),
+            Self::NotCapable => f.write_str("not capable"),
+            Self::Unknown => f.write_str("unknown (small aperture; the OS doesn't say why)"),
+            Self::Hidden => f.write_str("unknown (the OS hides the ranges from a 32-bit process)"),
+            Self::Integrated => f.write_str("not applicable (integrated GPU)"),
+        }
+    }
 }
 
 /// One display-class PCI device.
@@ -176,8 +201,21 @@ pub struct Gpu {
     pub own_link: Option<Link>,
     /// VRAM in bytes, where the OS tells (Windows: the display driver's
     /// registry key; Linux: `amdgpu` only). Set it from
-    /// `vulkan::Memory::vram` otherwise.
+    /// `vulkan::Memory::vram` otherwise. On an integrated GPU the carve-out
+    /// of system RAM.
     pub vram: Option<u64>,
+    /// The VRAM the CPU can reach as the driver counts it (Linux `amdgpu`
+    /// `mem_info_vis_vram_total`): the aperture on a card, all of
+    /// [`vram`](Self::vram) on an integrated GPU.
+    pub vis_vram: Option<u64>,
+    /// System memory the GPU maps through its page tables (Linux `amdgpu`
+    /// `mem_info_gtt_total`). On an integrated GPU most of what it can use.
+    pub gtt: Option<u64>,
+    /// Whether this is a GPU in the CPU package rather than a card, where
+    /// the OS tells ([`integrated_by`]); `None` when it doesn't (Windows, or
+    /// a Linux device without `amdgpu`'s counters off the root bus).
+    /// `vulkan::DeviceInfo::device_type` knows it from the driver.
+    pub integrated: Option<bool>,
     /// The OS keeps the assigned memory ranges from this process, so
     /// [`bars`](Self::bars) is empty without saying anything about the
     /// card: a 32-bit process on 64-bit Windows, where the configuration
@@ -193,10 +231,21 @@ impl Gpu {
         self.bars.iter().max_by_key(|b| b.size)
     }
 
-    /// Bytes of VRAM the CPU can map through the aperture.
+    /// Whether [`integrated`](Self::integrated) is known to be true.
+    #[must_use]
+    pub fn is_integrated(&self) -> bool {
+        self.integrated == Some(true)
+    }
+
+    /// Bytes of VRAM the CPU can map: the aperture on a card, the whole
+    /// carve-out on an integrated GPU (which bypasses its BAR).
     #[must_use]
     pub fn cpu_visible(&self) -> Option<u64> {
-        self.aperture().map(|b| b.size)
+        let aperture = self.aperture().map(|b| b.size);
+        if self.is_integrated() {
+            return self.vis_vram.or(self.vram).or(aperture);
+        }
+        aperture
     }
 
     /// Whether the aperture lies above 4 GiB ("Above 4G Decoding" is on).
@@ -218,6 +267,9 @@ impl Gpu {
     /// aperture beyond the legacy 256 MiB counts.
     #[must_use]
     pub fn full_access(&self) -> Option<bool> {
+        if self.is_integrated() {
+            return Some(true);
+        }
         let visible = self.cpu_visible()?;
         Some(match self.vram {
             Some(vram) => visible >= vram,
@@ -230,6 +282,9 @@ impl Gpu {
     pub fn resizable_bar(&self) -> ResizableBar {
         if self.ranges_hidden && self.bars.is_empty() {
             return ResizableBar::Hidden;
+        }
+        if self.is_integrated() {
+            return ResizableBar::Integrated;
         }
         if self.full_access() == Some(true) {
             return ResizableBar::Active;
@@ -264,6 +319,9 @@ impl fmt::Display for Gpu {
         }
         writeln!(f)?;
         match (self.link, self.max_link) {
+            (Some(l), _) if self.is_integrated() => {
+                write!(f, "  link: internal to the SoC (reports {l})")?;
+            }
             (Some(l), Some(m)) if l != m => write!(f, "  link: {l}, can train to {m}")?,
             (Some(l), _) => write!(f, "  link: {l}")?,
             (None, _) if self.behind_switch => {
@@ -281,6 +339,13 @@ impl fmt::Display for Gpu {
         writeln!(f, "{}", if switch { " (on-board switch)" } else { "" })?;
         let vram = self.vram.map_or_else(|| "unknown".into(), bytes);
         match self.aperture() {
+            _ if self.is_integrated() => {
+                write!(f, "  VRAM {vram} carved out of system RAM, all CPU-visible")?;
+                match self.gtt {
+                    Some(gtt) => writeln!(f, "; GTT {}", bytes(gtt))?,
+                    None => writeln!(f)?,
+                }
+            }
             Some(bar) => writeln!(
                 f,
                 "  VRAM {vram}, CPU-visible {} at {:#x} ({} 4 GiB)",
@@ -294,16 +359,7 @@ impl fmt::Display for Gpu {
             )?,
             None => writeln!(f, "  VRAM {vram}, no memory BAR reported")?,
         }
-        let rebar = match self.resizable_bar() {
-            ResizableBar::Active => "active".to_string(),
-            ResizableBar::Inactive { max } => format!("capable up to {}, not active", bytes(max)),
-            ResizableBar::NotCapable => "not capable".into(),
-            ResizableBar::Unknown => "unknown (small aperture; the OS doesn't say why)".into(),
-            ResizableBar::Hidden => {
-                "unknown (the OS hides the ranges from a 32-bit process)".into()
-            }
-        };
-        write!(f, "  resizable BAR: {rebar}")
+        write!(f, "  resizable BAR: {}", self.resizable_bar())
     }
 }
 
@@ -406,19 +462,44 @@ pub fn parse_resize_mask(text: &str) -> Vec<u64> {
         .collect()
 }
 
+/// Whether a display device is integrated, from what Linux shows:
+///
+/// - `root_bus`: it sits on a root bus with no bridge above it, a
+///   root-complex integrated endpoint (Intel iGPUs at `00:02.0`). A card
+///   always hangs off a root port.
+/// - `vis_vram` beyond the largest BAR: the CPU reaches more VRAM than any
+///   aperture maps, so it isn't going through one. `amdgpu` does this for
+///   its APUs, whose carve-out it maps directly (AMD APUs sit behind an
+///   internal root port, so `root_bus` misses them).
+/// - `amdgpu` counters present without that: a card.
+///
+/// `None` when nothing tells.
+#[must_use]
+pub fn integrated_by(root_bus: bool, aperture: Option<u64>, vis_vram: Option<u64>) -> Option<bool> {
+    if root_bus {
+        return Some(true);
+    }
+    let vis = vis_vram?;
+    Some(aperture.is_some_and(|a| vis > a))
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::fs;
     use std::io;
     use std::path::{Path, PathBuf};
 
-    use super::{Gpu, Link, parse_resize_mask, parse_resource};
+    use super::{Gpu, Link, integrated_by, parse_resize_mask, parse_resource};
     use crate::pci::{self, PciAddress};
 
     const ROOT: &str = "/sys/bus/pci/devices";
 
     fn read(dir: &Path, name: &str) -> Option<String> {
         fs::read_to_string(dir.join(name)).ok()
+    }
+
+    fn number(dir: &Path, name: &str) -> Option<u64> {
+        read(dir, name)?.trim().parse().ok()
     }
 
     fn hex(dir: &Path, name: &str) -> Option<u32> {
@@ -466,6 +547,11 @@ mod linux {
                 }
             }
             let slot = slot_device(&dir, vendor);
+            // A PCI device's parent directory is a bridge with its own
+            // `class`, or the root bus (`/sys/devices/pci0000:00`) without.
+            let root_bus = dir.parent().is_some_and(|p| !p.join("class").exists());
+            let vis_vram = number(&dir, "mem_info_vis_vram_total");
+            let aperture = bars.iter().map(|b| b.size).max();
             out.push(Gpu {
                 ids: pci::Gpu::from_pci(vendor, device),
                 address: dir
@@ -478,7 +564,10 @@ mod linux {
                 max_link: link(&slot, "max"),
                 behind_switch: slot != dir,
                 own_link: link(&dir, "current"),
-                vram: read(&dir, "mem_info_vram_total").and_then(|v| v.trim().parse().ok()),
+                vram: number(&dir, "mem_info_vram_total"),
+                vis_vram,
+                gtt: number(&dir, "mem_info_gtt_total"),
+                integrated: integrated_by(root_bus, aperture, vis_vram),
                 ranges_hidden: false,
             });
         }
@@ -877,6 +966,9 @@ mod windows {
                 behind_switch: slot != inst,
                 own_link: link(inst, &PCI_CURRENT_LINK_SPEED, &PCI_CURRENT_LINK_WIDTH),
                 vram: vram(inst),
+                vis_vram: None,
+                gtt: None,
+                integrated: None,
                 ranges_hidden,
             });
         }
@@ -955,6 +1047,9 @@ mod tests {
             behind_switch: true,
             own_link: Link::from_codes(1, 1),
             vram,
+            vis_vram: None,
+            gtt: None,
+            integrated: None,
             ranges_hidden: false,
         }
     }
@@ -1024,6 +1119,65 @@ mod tests {
         // VRAM unknown: a large aperture still counts.
         let unknown = gpu(vec![bar(None, 0x40_0000_0000, 8 << 30, vec![])], None);
         assert_eq!(unknown.full_access(), Some(true));
+    }
+
+    #[test]
+    fn integrated_gpus_are_told_apart() {
+        // Intel iGPU on the root bus; AMD APU behind an internal root port,
+        // whose 1 GiB carve-out amdgpu maps past its 256 MiB BAR; an AMD card
+        // with a 256 MiB BAR the driver counts as the visible part; a
+        // non-amdgpu card behind a root port: no word.
+        let mib = 1 << 20;
+        assert_eq!(integrated_by(true, Some(256 * mib), None), Some(true));
+        assert_eq!(
+            integrated_by(false, Some(256 * mib), Some(1024 * mib)),
+            Some(true)
+        );
+        assert_eq!(
+            integrated_by(false, Some(256 * mib), Some(256 * mib)),
+            Some(false)
+        );
+        assert_eq!(integrated_by(false, Some(16 << 30), None), None);
+    }
+
+    #[test]
+    fn an_integrated_gpu_reads_as_one() {
+        // The Radeon 680M as Linux shows it.
+        let apu = Gpu {
+            ids: crate::pci::Gpu::from_pci(0x1002, 0x1681),
+            address: "0000:04:00.0".parse().ok(),
+            name: None,
+            bars: vec![
+                bar(Some(0), 0x4_b000_0000, 256 << 20, vec![]),
+                bar(Some(2), 0x4_c000_0000, 2 << 20, vec![]),
+            ],
+            link: Link::from_codes(4, 16),
+            max_link: Link::from_codes(4, 16),
+            behind_switch: false,
+            own_link: Link::from_codes(4, 16),
+            vram: Some(1 << 30),
+            vis_vram: Some(1 << 30),
+            gtt: Some(7_723_339_776),
+            integrated: Some(true),
+            ranges_hidden: false,
+        };
+        assert_eq!(apu.resizable_bar(), ResizableBar::Integrated);
+        assert_eq!(apu.cpu_visible(), Some(1 << 30));
+        assert_eq!(apu.full_access(), Some(true));
+        assert_eq!(
+            apu.to_string(),
+            "AMD [1002:1681] AMD RDNA 2 at 0000:04:00.0\n  \
+             link: internal to the SoC (reports PCIe 4.0 x16 (31.51 GB/s))\n  \
+             VRAM 1 GiB carved out of system RAM, all CPU-visible; GTT 7.19 GiB\n  \
+             resizable BAR: not applicable (integrated GPU)"
+        );
+        // Not known as integrated: read as a card, as before.
+        let card = Gpu {
+            integrated: None,
+            ..apu
+        };
+        assert_eq!(card.resizable_bar(), ResizableBar::NotCapable);
+        assert_eq!(card.cpu_visible(), Some(256 << 20));
     }
 
     #[test]

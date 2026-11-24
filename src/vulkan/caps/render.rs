@@ -8,7 +8,7 @@ const AREA: Area = Area::Render;
 
 pub const DYNAMIC_RENDERING: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "dynamic_rendering",
     doc: "vkCmdBeginRendering, no render pass or framebuffer objects",
@@ -24,7 +24,7 @@ pub const DYNAMIC_RENDERING: Spec = Spec {
 
 pub const SAMPLER_FILTER_MINMAX: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "sampler_filter_minmax",
     doc: "min/max reduction samplers (one-pass depth pyramids)",
@@ -36,7 +36,7 @@ pub const SAMPLER_FILTER_MINMAX: Spec = Spec {
 
 pub const SAMPLER_ANISOTROPY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "sampler_anisotropy",
     doc: "anisotropic texture filtering",
@@ -45,7 +45,7 @@ pub const SAMPLER_ANISOTROPY: Spec = Spec {
 
 pub const TEXTURE_COMPRESSION_BC: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "texture_compression_bc",
     doc: "BC1-BC7 textures (desktop GPUs)",
@@ -90,7 +90,7 @@ pub const TEXTURE_COMPRESSION_ASTC_HDR: Spec = Spec {
 
 pub const FILL_MODE_NON_SOLID: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "fill_mode_non_solid",
     doc: "wireframe and point polygon modes (debug views)",
@@ -99,7 +99,7 @@ pub const FILL_MODE_NON_SOLID: Spec = Spec {
 
 pub const DEPTH_CLAMP: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "depth_clamp",
     doc: "clamp depth instead of clipping (shadow pancaking)",
@@ -108,7 +108,7 @@ pub const DEPTH_CLAMP: Spec = Spec {
 
 pub const WIDE_LINES: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "wide_lines",
     doc: "line widths other than 1.0",
@@ -117,7 +117,7 @@ pub const WIDE_LINES: Spec = Spec {
 
 pub const DEPTH_BOUNDS: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "depth_bounds",
     doc: "the depth bounds test",
@@ -126,7 +126,7 @@ pub const DEPTH_BOUNDS: Spec = Spec {
 
 pub const LOGIC_OP: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "logic_op",
     doc: "logic operations on colour attachments",
@@ -135,7 +135,7 @@ pub const LOGIC_OP: Spec = Spec {
 
 pub const MULTIVIEW: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "multiview",
     doc: "one render pass to several views (Direct3D's view instancing)",
@@ -148,7 +148,7 @@ pub const MULTIVIEW: Spec = Spec {
 
 pub const FRAGMENT_SHADING_RATE: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "fragment_shading_rate",
     doc: "a shading rate per draw (variable rate shading tier 1)",
@@ -161,7 +161,7 @@ pub const FRAGMENT_SHADING_RATE: Spec = Spec {
 
 pub const FRAGMENT_SHADING_RATE_ATTACHMENT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::FragmentShadingRate],
     name: "fragment_shading_rate_attachment",
     doc: "shading rate per primitive and from an attachment (tier 2)",
@@ -177,7 +177,7 @@ pub const FRAGMENT_SHADING_RATE_ATTACHMENT: Spec = Spec {
 
 pub const FRAGMENT_SHADER_INTERLOCK: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "fragment_shader_interlock",
     doc: "ordered critical sections per pixel (Direct3D's rasterizer-ordered views)",
@@ -190,7 +190,7 @@ pub const FRAGMENT_SHADER_INTERLOCK: Spec = Spec {
 
 pub const CONSERVATIVE_RASTERIZATION: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "conservative_rasterization",
     doc: "overestimating rasterization; the tier is in its properties",

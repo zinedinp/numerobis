@@ -83,6 +83,12 @@ impl Support {
     pub const WINDOWS_TESTED: Self = Self::new(Status::Untested, Status::Tested);
     /// Windows only, run there.
     pub const WINDOWS_ONLY_TESTED: Self = Self::new(Status::Unavailable, Status::Tested);
+    /// Everywhere, run on Linux and Windows.
+    pub const TESTED: Self = Self::new(Status::Tested, Status::Tested);
+    /// Everywhere, run on Linux.
+    pub const LINUX_TESTED: Self = Self::new(Status::Tested, Status::Untested);
+    /// Linux only, run there.
+    pub const LINUX_ONLY_TESTED: Self = Self::new(Status::Tested, Status::Unavailable);
 
     #[must_use]
     pub const fn new(linux: Status, windows: Status) -> Self {

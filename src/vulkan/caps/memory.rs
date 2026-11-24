@@ -8,7 +8,7 @@ const AREA: Area = Area::Memory;
 
 pub const ROBUST_BUFFER_ACCESS: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "robust_buffer_access",
     doc: "out-of-bounds buffer reads give zeros instead of faulting",
@@ -17,7 +17,7 @@ pub const ROBUST_BUFFER_ACCESS: Spec = Spec {
 
 pub const STORAGE_16BIT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "storage_16bit",
     doc: "16-bit types in storage buffers",
@@ -34,7 +34,7 @@ pub const STORAGE_16BIT: Spec = Spec {
 
 pub const STORAGE_8BIT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "storage_8bit",
     doc: "8-bit types in storage buffers",
@@ -50,7 +50,7 @@ pub const STORAGE_8BIT: Spec = Spec {
 
 pub const SCALAR_BLOCK_LAYOUT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "scalar_block_layout",
     doc: "C-like (scalar) buffer layouts, no std430 padding",
@@ -66,7 +66,7 @@ pub const SCALAR_BLOCK_LAYOUT: Spec = Spec {
 
 pub const BUFFER_DEVICE_ADDRESS: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "buffer_device_address",
     doc: "64-bit GPU pointers to buffers in shaders",
@@ -82,7 +82,7 @@ pub const BUFFER_DEVICE_ADDRESS: Spec = Spec {
 
 pub const MEMORY_PRIORITY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "memory_priority",
     doc: "allocation priorities for the driver's eviction",
@@ -108,7 +108,7 @@ pub const PAGEABLE_DEVICE_LOCAL_MEMORY: Spec = Spec {
 
 pub const MEMORY_BUDGET: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "memory_budget",
     doc: "per-heap budget and usage (VkPhysicalDeviceMemoryBudgetPropertiesEXT)",
@@ -117,7 +117,7 @@ pub const MEMORY_BUDGET: Spec = Spec {
 
 pub const HOST_IMAGE_COPY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "host_image_copy",
     doc: "image uploads and downloads from the CPU, no staging buffer or queue",
@@ -133,7 +133,7 @@ pub const HOST_IMAGE_COPY: Spec = Spec {
 
 pub const SPARSE_RESIDENCY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "sparse_residency",
     doc: "sparse buffers and 2D images, partly resident and aliased (Direct3D's tiled resources)",

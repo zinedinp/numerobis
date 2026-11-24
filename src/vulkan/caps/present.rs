@@ -30,7 +30,7 @@ pub const FIFO_LATEST_READY: Spec = Spec {
 
 pub const PRESENT_ID: Spec = Spec {
     area: AREA,
-    support: Support::UNTESTED,
+    support: Support::LINUX_TESTED,
     needs: &[],
     name: "present_id",
     doc: "an id per present (VkPresentIdKHR)",
@@ -43,7 +43,7 @@ pub const PRESENT_ID: Spec = Spec {
 
 pub const PRESENT_WAIT: Spec = Spec {
     area: AREA,
-    support: Support::UNTESTED,
+    support: Support::LINUX_TESTED,
     needs: &[Capability::PresentId],
     name: "present_wait",
     doc: "vkWaitForPresentKHR: wait until a present id reached the screen",
@@ -56,7 +56,7 @@ pub const PRESENT_WAIT: Spec = Spec {
 
 pub const PRESENT_ID2: Spec = Spec {
     area: AREA,
-    support: Support::UNTESTED,
+    support: Support::LINUX_TESTED,
     needs: &[],
     name: "present_id2",
     doc: "present ids per surface (needs the instance extensions \
@@ -70,7 +70,7 @@ pub const PRESENT_ID2: Spec = Spec {
 
 pub const PRESENT_WAIT2: Spec = Spec {
     area: AREA,
-    support: Support::UNTESTED,
+    support: Support::LINUX_TESTED,
     needs: &[Capability::PresentId2],
     name: "present_wait2",
     doc: "vkWaitForPresent2KHR, per surface",

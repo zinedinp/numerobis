@@ -8,7 +8,7 @@ const AREA: Area = Area::Interop;
 
 pub const EXTERNAL_MEMORY_FD: Spec = Spec {
     area: AREA,
-    support: Support::LINUX,
+    support: Support::LINUX_ONLY_TESTED,
     needs: &[],
     name: "external_memory_fd",
     doc: "memory exported and imported as POSIX fds",
@@ -17,7 +17,7 @@ pub const EXTERNAL_MEMORY_FD: Spec = Spec {
 
 pub const DMA_BUF: Spec = Spec {
     area: AREA,
-    support: Support::LINUX,
+    support: Support::LINUX_ONLY_TESTED,
     needs: &[],
     name: "dma_buf",
     doc: "dma-buf import and export: zero-copy with numerobis::dmabuf, KMS and V4L2",
@@ -26,7 +26,7 @@ pub const DMA_BUF: Spec = Spec {
 
 pub const DRM_FORMAT_MODIFIER: Spec = Spec {
     area: AREA,
-    support: Support::LINUX,
+    support: Support::LINUX_ONLY_TESTED,
     needs: &[],
     name: "drm_format_modifier",
     doc: "images with DRM format modifiers (tiled dma-bufs)",
@@ -35,7 +35,7 @@ pub const DRM_FORMAT_MODIFIER: Spec = Spec {
 
 pub const EXTERNAL_SEMAPHORE_FD: Spec = Spec {
     area: AREA,
-    support: Support::LINUX,
+    support: Support::LINUX_ONLY_TESTED,
     needs: &[],
     name: "external_semaphore_fd",
     doc: "semaphores as fds, SYNC_FD included (numerobis::sync)",

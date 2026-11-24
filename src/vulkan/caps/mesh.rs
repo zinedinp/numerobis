@@ -7,7 +7,7 @@ const AREA: Area = Area::Mesh;
 
 pub const MESH_SHADER: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "mesh_shader",
     doc: "mesh shaders (VK_EXT_mesh_shader); task shaders are a separate bit",
@@ -20,7 +20,7 @@ pub const MESH_SHADER: Spec = Spec {
 
 pub const TASK_SHADER: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::MeshShader],
     name: "task_shader",
     doc: "task shaders in front of mesh shaders (Direct3D's amplification shaders)",

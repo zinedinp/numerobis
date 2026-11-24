@@ -9,7 +9,7 @@ const AREA: Area = Area::RayTracing;
 
 pub const ACCELERATION_STRUCTURE: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "acceleration_structure",
     doc: "bottom- and top-level acceleration structures built on the GPU",
@@ -22,7 +22,7 @@ pub const ACCELERATION_STRUCTURE: Spec = Spec {
 
 pub const RAY_TRACING_PIPELINE: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::AccelerationStructure],
     name: "ray_tracing_pipeline",
     doc: "raytracing pipelines and vkCmdTraceRaysKHR (raygen, hit, miss shaders)",
@@ -35,7 +35,7 @@ pub const RAY_TRACING_PIPELINE: Spec = Spec {
 
 pub const RAY_TRAVERSAL_PRIMITIVE_CULLING: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::RayTracingPipeline],
     name: "ray_traversal_primitive_culling",
     doc: "skipping triangles or AABBs during traversal (what DXR 1.1 needs beside ray queries)",
@@ -48,7 +48,7 @@ pub const RAY_TRAVERSAL_PRIMITIVE_CULLING: Spec = Spec {
 
 pub const RAY_QUERY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::AccelerationStructure],
     name: "ray_query",
     doc: "inline ray queries from any shader stage",
@@ -61,7 +61,7 @@ pub const RAY_QUERY: Spec = Spec {
 
 pub const RAY_TRACING_MAINTENANCE1: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::AccelerationStructure],
     name: "ray_tracing_maintenance1",
     doc: "acceleration structure size queries, vkCmdTraceRaysIndirect2KHR",

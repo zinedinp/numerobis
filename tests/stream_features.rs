@@ -330,3 +330,97 @@ fn host_dmabuf_into_device_without_copy() {
         &[0.0f32.to_le_bytes(), 2.0f32.to_le_bytes()].concat()[..]
     );
 }
+
+/// PRIME against a real DRM driver: a dumb buffer on the first primary node
+/// that hands one out (any KMS driver: amdgpu, i915, xe, nouveau, v3d),
+/// exported as a dma-buf, mapped and written through it, and imported on the
+/// render node as another GEM handle. Skipped without such a node.
+#[cfg(target_os = "linux")]
+#[test]
+fn prime_round_trip_on_a_real_drm_device() {
+    use numerobis::dmabuf::{self, HostDmabuf};
+    use std::fs::OpenOptions;
+    use std::os::fd::AsFd;
+    use std::os::unix::io::AsRawFd;
+
+    /// `struct drm_mode_create_dumb`.
+    #[repr(C)]
+    #[derive(Default)]
+    struct CreateDumb {
+        height: u32,
+        width: u32,
+        bpp: u32,
+        flags: u32,
+        handle: u32,
+        pitch: u32,
+        size: u64,
+    }
+    /// `struct drm_gem_close`.
+    #[repr(C)]
+    struct GemClose {
+        handle: u32,
+        pad: u32,
+    }
+    const CREATE_DUMB: libc::c_ulong = 0xC020_64B2; // DRM_IOWR(0xB2, 32 bytes)
+    const DESTROY_DUMB: libc::c_ulong = 0xC004_64B4; // DRM_IOWR(0xB4, 4 bytes)
+    const GEM_CLOSE: libc::c_ulong = 0x4008_6409; // DRM_IOW(0x09, 8 bytes)
+
+    let open = |path: &str| OpenOptions::new().read(true).write(true).open(path).ok();
+    let nodes = |prefix: &'static str| {
+        (0..16).filter_map(move |i| open(&format!("/dev/dri/{prefix}{i}")).map(|f| (i, f)))
+    };
+    let dumb = nodes("card").find_map(|(i, card)| {
+        let mut c = CreateDumb {
+            height: 64,
+            width: 64,
+            bpp: 32,
+            ..Default::default()
+        };
+        // SAFETY: CreateDumb matches DRM_IOCTL_MODE_CREATE_DUMB.
+        let ok = unsafe { libc::ioctl(card.as_raw_fd(), CREATE_DUMB, &raw mut c) } == 0;
+        ok.then_some((i, card, c))
+    });
+    let Some((index, card, buf)) = dumb else {
+        eprintln!("skipped: no DRM primary node gives this user a dumb buffer");
+        return;
+    };
+    let len = usize::try_from(buf.size).unwrap();
+    assert!(len >= 64 * 64 * 4);
+
+    // GEM handle -> dma-buf, mapped by the CPU through the dma-buf itself.
+    let fd = dmabuf::prime_export(card.as_fd(), buf.handle).unwrap();
+    assert!(dmabuf::size(fd.as_fd()).unwrap() >= len);
+    let map = HostDmabuf::map(fd.as_fd(), len).unwrap();
+    assert!(
+        map.is_dmabuf(),
+        "card{index}: an exported buffer is a dma-buf"
+    );
+    let pattern: Vec<u8> = (0..=255).collect();
+    map.write(len - 256, &pattern).unwrap();
+    let mut back = vec![0; 256];
+    HostDmabuf::map(fd.as_fd(), len)
+        .unwrap()
+        .read(len - 256, &mut back)
+        .unwrap();
+    assert_eq!(back, pattern);
+
+    // Re-importing on the same node gives the same handle back (the kernel
+    // keeps one handle per buffer and file); on a render node a new one.
+    assert_eq!(
+        dmabuf::prime_import(card.as_fd(), fd.as_fd()).unwrap(),
+        buf.handle
+    );
+    if let Some((_, render)) = nodes("renderD").next() {
+        let handle = dmabuf::prime_import(render.as_fd(), fd.as_fd()).unwrap();
+        assert_ne!(handle, 0);
+        let mut close = GemClose { handle, pad: 0 };
+        // SAFETY: GemClose matches DRM_IOCTL_GEM_CLOSE; we own the handle.
+        assert_eq!(
+            unsafe { libc::ioctl(render.as_raw_fd(), GEM_CLOSE, &raw mut close) },
+            0
+        );
+    }
+    let mut destroy = buf.handle;
+    // SAFETY: `struct drm_mode_destroy_dumb` is one u32 handle, ours.
+    unsafe { libc::ioctl(card.as_raw_fd(), DESTROY_DUMB, &raw mut destroy) };
+}

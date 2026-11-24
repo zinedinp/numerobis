@@ -448,25 +448,28 @@ capability that is untested on its OS with `(untested on Linux)`.
 |---|---|---|
 | raw NVIDIA backend | tested (RTX 3080) | unavailable |
 | raw Tenstorrent backend | kernel code under qemu, on-card pending | unavailable |
-| `dmabuf`, `sync` | Linux only | unavailable |
+| `dmabuf`, `sync` | tested on amdgpu (Radeon 680M): timeline syncobjs, PRIME export/import of a real buffer; `/dev/udmabuf` needs the `kvm` group, else the memfd fallback | unavailable |
 | `pci` tables, `vulkan` tables and waterfall, `directx` tables | unit-tested | unit-tested |
-| Vulkan capabilities on a real driver | untested | 77 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
+| Vulkan capabilities on a real driver | 80 tested (AMD Radeon 680M, integrated, RADV 26.3.1, API 1.0 to 1.4; without the validation layer) | 77 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
 | Direct3D 10 to 12 capabilities on a real driver | untested (DXVK, vkd3d-proton) | 59 tested (B580: D3D12 at 12_2 with shader model 6.8, D3D11, 10.1, under the debug layers) |
 | Direct3D 8 / 9 capabilities | untested (DXVK) | 45 tested (B580: D3D9, and D3D8 from Microsoft's 32-bit runtime) |
 | `directx::modern::queue` | untested | tested: normal and high; global realtime refused without the privilege, with it untested |
-| `vulkan::priority` | untested | tested: all four levels accepted on the B580, API 1.0 to 1.4; the `NOT_PERMITTED` fallback unit-tested only |
-| `vulkan::interop` fd / dma-buf / DRM modifiers | untested | unavailable |
+| `vulkan::priority` | tested: low and medium on the 680M, the most its family allows; high and realtime fall back to medium | tested: all four levels accepted on the B580, API 1.0 to 1.4; the `NOT_PERMITTED` fallback unit-tested only |
+| `vulkan::interop` fd / dma-buf / DRM modifiers | tested (680M: granted, PRIME round trip of an amdgpu buffer) | unavailable |
 | `vulkan::interop` Win32 handles | unavailable | tested |
-| `pci::bar` | untested (parsers unit-tested) | tested (Intel Arc B580); a 32-bit process gets no ranges (the OS hides them under WOW64, reported as such) |
+| `pci::bar` | tested (Radeon 680M: told apart as integrated, its carve-out counted as CPU-visible, no resizable BAR to speak of) | tested (Intel Arc B580); a 32-bit process gets no ranges (the OS hides them under WOW64, reported as such) |
 | 32-bit x86 (`i686-pc-windows-msvc`) | untested | tested: lib tests, `vulkan_probe`, `directx_probe` (needs miraculix 0.6.5) |
-| `examples/vulkan_probe` loader | untested (`libvulkan.so.1`) | tested (`vulkan-1.dll`) |
+| `examples/vulkan_probe` loader | tested (`libvulkan.so.1`) | tested (`vulkan-1.dll`) |
 | `examples/directx_probe` | unavailable (a Windows program; under Wine untested) | tested |
-| `matrix` tables | unit-tested | Xe2 tested through Vulkan cooperative matrices (`matrix_probe`: the four reported types bit-exact); other engines untested |
+| `matrix` tables | unit-tested; RDNA 2 (680M) has no cooperative matrix to run | Xe2 tested through Vulkan cooperative matrices (`matrix_probe`: the four reported types bit-exact); other engines untested |
 | `intel::xess`, `examples/xess_probe` | unavailable (XeSS is Windows only) | tested (B580, driver 101.9175) |
 
 `Capability::spec().support` has the per-capability flag; on Windows the
 capabilities the B580 doesn't have (bfloat16, float8, shader objects, ASTC,
-the present extensions) stay untested.
+the present extensions) stay untested. On Linux the 680M lacks cooperative
+matrices, bfloat16, float8, pageable device-local memory, opacity
+micromaps, ray-tracing invocation reorder, FIFO latest-ready, ETC2 and ASTC,
+which stay untested there.
 
 ## Usage
 

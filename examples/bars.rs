@@ -1,7 +1,7 @@
 //! Lists every GPU's PCIe link, BAR aperture and resizable-BAR state.
 //!
-//! `cargo run --example bars`. Windows: tested; Linux: untested
-//! ([`numerobis::pci::bar::SUPPORT`]).
+//! `cargo run --example bars`. Tested on Windows (Intel Arc B580) and Linux
+//! (AMD Radeon 680M, integrated) ([`numerobis::pci::bar::SUPPORT`]).
 
 fn main() {
     println!(

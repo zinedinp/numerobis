@@ -11,7 +11,7 @@ const MODEL: &[&str] = &["vulkanMemoryModel"];
 
 pub const VULKAN_MEMORY_MODEL: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "vulkan_memory_model",
     doc: "the Vulkan memory model (acquire/release, availability and visibility)",

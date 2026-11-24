@@ -1067,7 +1067,11 @@ impl fmt::Display for Plan {
             writeln!(f, "  device: {}", device.describe(self.os))?;
         }
         if let Some(memory) = &self.memory {
-            writeln!(f, "  memory: {memory}")?;
+            let integrated = self
+                .device_info
+                .as_ref()
+                .is_some_and(DeviceInfo::is_integrated);
+            writeln!(f, "  memory: {}", memory.summary(integrated))?;
         }
         for outcome in &self.outcomes {
             writeln!(f, "  {outcome}")?;

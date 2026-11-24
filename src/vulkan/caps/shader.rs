@@ -19,7 +19,7 @@ const AREA: Area = Area::Shader;
 
 pub const INT16: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "int16",
     doc: "16-bit integers in shader arithmetic",
@@ -28,7 +28,7 @@ pub const INT16: Spec = Spec {
 
 pub const INT64: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "int64",
     doc: "64-bit integers in shader arithmetic",
@@ -37,7 +37,7 @@ pub const INT64: Spec = Spec {
 
 pub const FLOAT16: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "float16",
     doc: "16-bit floats in shader arithmetic",
@@ -49,7 +49,7 @@ pub const FLOAT16: Spec = Spec {
 
 pub const INT8: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "int8",
     doc: "8-bit integers in shader arithmetic",
@@ -61,7 +61,7 @@ pub const INT8: Spec = Spec {
 
 pub const SUBGROUP_VOTE: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "subgroup_vote",
     doc: "subgroupAll/Any in compute shaders",
@@ -70,7 +70,7 @@ pub const SUBGROUP_VOTE: Spec = Spec {
 
 pub const SUBGROUP_ARITHMETIC: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "subgroup_arithmetic",
     doc: "subgroupAdd/Min/Max and the scans in compute shaders",
@@ -79,7 +79,7 @@ pub const SUBGROUP_ARITHMETIC: Spec = Spec {
 
 pub const SUBGROUP_BALLOT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "subgroup_ballot",
     doc: "subgroupBallot and broadcasts in compute shaders",
@@ -88,7 +88,7 @@ pub const SUBGROUP_BALLOT: Spec = Spec {
 
 pub const SUBGROUP_SHUFFLE: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "subgroup_shuffle",
     doc: "subgroupShuffle in compute shaders",
@@ -97,7 +97,7 @@ pub const SUBGROUP_SHUFFLE: Spec = Spec {
 
 pub const SUBGROUP_SIZE_CONTROL: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "subgroup_size_control",
     doc: "a pipeline can pick its subgroup size",
@@ -113,7 +113,7 @@ pub const SUBGROUP_SIZE_CONTROL: Spec = Spec {
 
 pub const DEMOTE_TO_HELPER_INVOCATION: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "demote_to_helper_invocation",
     doc: "discard that keeps derivatives valid for the quad",
@@ -133,7 +133,7 @@ pub const DEMOTE_TO_HELPER_INVOCATION: Spec = Spec {
 
 pub const INTEGER_DOT_PRODUCT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "integer_dot_product",
     doc: "packed 8-bit integer dot products",
@@ -149,7 +149,7 @@ pub const INTEGER_DOT_PRODUCT: Spec = Spec {
 
 pub const GEOMETRY_SHADER: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "geometry_shader",
     doc: "geometry shaders",
@@ -158,7 +158,7 @@ pub const GEOMETRY_SHADER: Spec = Spec {
 
 pub const TESSELLATION_SHADER: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "tessellation_shader",
     doc: "tessellation control and evaluation shaders",
@@ -167,7 +167,7 @@ pub const TESSELLATION_SHADER: Spec = Spec {
 
 pub const FLOAT64: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "float64",
     doc: "64-bit floats in shaders",
@@ -176,7 +176,7 @@ pub const FLOAT64: Spec = Spec {
 
 pub const ATOMIC_INT64: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::Int64],
     name: "atomic_int64",
     doc: "64-bit integer atomics on storage buffers",
@@ -192,7 +192,7 @@ pub const ATOMIC_INT64: Spec = Spec {
 
 pub const IMAGE_ATOMIC_INT64: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::Int64],
     name: "image_atomic_int64",
     doc: "64-bit integer atomics on storage images (what sampler feedback builds on in vkd3d-proton)",
@@ -205,7 +205,7 @@ pub const IMAGE_ATOMIC_INT64: Spec = Spec {
 
 pub const FRAGMENT_SHADER_BARYCENTRIC: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "fragment_shader_barycentric",
     doc: "barycentric coordinates and per-vertex inputs in fragment shaders",

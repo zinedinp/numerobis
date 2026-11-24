@@ -10,7 +10,7 @@
 //!
 //! No bindings: the loader is opened by hand (`vulkan-1.dll` on Windows,
 //! `libvulkan.so.1` on Linux). Windows: tested (Intel Arc B580). Linux:
-//! untested.
+//! tested (AMD Radeon 680M, RADV), without the validation layer.
 
 #![allow(
     clippy::too_many_lines,
@@ -636,9 +636,15 @@ fn main() {
             // The PCI side of the same card.
             match (info.bar(), plan.memory()) {
                 (Some(gpu), Some(memory)) => println!(
-                    "  pci::bar: {}\n  CPU-visible VRAM: Vulkan {}, PCI aperture {}",
+                    "  pci::bar: {}\n  CPU-visible VRAM: Vulkan {}, {} {}",
                     gpu.to_string().replace('\n', "\n  "),
                     bytes(memory.cpu_visible_vram()),
+                    // An integrated GPU's carve-out isn't behind its BAR.
+                    if gpu.is_integrated() {
+                        "carve-out"
+                    } else {
+                        "PCI aperture"
+                    },
                     gpu.cpu_visible().map_or_else(|| "unknown".into(), bytes)
                 ),
                 (None, _) => println!("  pci::bar: no PCI device matches (not a PCI GPU?)"),

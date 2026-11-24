@@ -1151,13 +1151,15 @@ fn the_cache_keeps_the_first_plans_and_ranks_over_them() {
 
 #[test]
 fn untested_platforms_are_marked_in_the_log() {
-    let cap = [Capability::SamplerAnisotropy];
+    let cap = [Capability::TextureCompressionEtc2];
     for os in [Os::Linux, Os::Windows] {
         let mut probe = Probe::new(Offer::new(V::V1_3, V::V1_3, []).with_os(os), &cap);
-        fill(&mut probe, &[(Chain::Core10, "samplerAnisotropy")]);
+        fill(&mut probe, &[(Chain::Core10, "textureCompressionETC2")]);
         let plan = probe.plan();
-        let outcome = plan.outcome(Capability::SamplerAnisotropy).expect("asked");
-        let untested = Capability::SamplerAnisotropy.spec().support.on(os) == Status::Untested;
+        let outcome = plan
+            .outcome(Capability::TextureCompressionEtc2)
+            .expect("asked");
+        let untested = Capability::TextureCompressionEtc2.spec().support.on(os) == Status::Untested;
         assert_eq!(outcome.untested_on, untested.then_some(os));
         assert_eq!(
             plan.to_string().contains(&format!("(untested on {os})")),
@@ -1165,6 +1167,11 @@ fn untested_platforms_are_marked_in_the_log() {
             "{plan}"
         );
     }
+    // ETC2 ran on Windows only: the mark shows up on Linux alone.
+    assert_eq!(
+        Capability::TextureCompressionEtc2.spec().support,
+        crate::platform::Support::WINDOWS_TESTED
+    );
 }
 
 #[test]

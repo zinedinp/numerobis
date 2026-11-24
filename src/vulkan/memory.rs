@@ -10,7 +10,7 @@
 //! its copy is older than a set age.
 
 use std::ffi::c_void;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::time::{Duration, Instant};
 
 use super::features::s_type;
@@ -259,7 +259,9 @@ impl Memory {
     }
 
     /// Whether every device-local type is also host visible: one memory for
-    /// CPU and GPU (integrated GPUs, Apple).
+    /// CPU and GPU (Apple, Intel and llvmpipe). RADV keeps a device-local
+    /// type without host visibility on AMD APUs too, so this alone misses
+    /// them; [`summary`](Self::summary) takes the device type for that.
     #[must_use]
     pub fn is_unified(&self) -> bool {
         let mut local = self
@@ -386,23 +388,41 @@ impl BudgetCache {
 
 pub use crate::pci::bytes;
 
-impl fmt::Display for Memory {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Memory {
+    /// One line, as [`Display`](fmt::Display) but told whether the device is
+    /// an integrated GPU (`DeviceInfo::is_integrated`): then its
+    /// device-local heap is system RAM, whatever the memory types say.
+    #[must_use]
+    pub fn summary(&self, integrated: bool) -> String {
         let (vram, visible) = (self.vram(), self.cpu_visible_vram());
-        if self.is_unified() {
-            write!(f, "{} unified", bytes(vram))?;
+        let mut s = if self.is_unified() {
+            format!("{} unified", bytes(vram))
+        } else if integrated && self.full_cpu_access() {
+            format!("{} shared with system RAM, all CPU-visible", bytes(vram))
+        } else if integrated {
+            format!(
+                "{} shared with system RAM, {} CPU-visible",
+                bytes(vram),
+                bytes(visible)
+            )
         } else if self.full_cpu_access() {
-            write!(f, "{} VRAM, all CPU-visible", bytes(vram))?;
+            format!("{} VRAM, all CPU-visible", bytes(vram))
         } else if visible > 0 {
-            write!(f, "{} VRAM, {} CPU-visible", bytes(vram), bytes(visible))?;
+            format!("{} VRAM, {} CPU-visible", bytes(vram), bytes(visible))
         } else {
-            write!(f, "{} VRAM, none CPU-visible", bytes(vram))?;
-        }
+            format!("{} VRAM, none CPU-visible", bytes(vram))
+        };
         let host = self.host();
         if host > 0 {
-            write!(f, ", {} host", bytes(host))?;
+            _ = write!(s, ", {} host", bytes(host));
         }
-        Ok(())
+        s
+    }
+}
+
+impl fmt::Display for Memory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.summary(false))
     }
 }
 
@@ -478,6 +498,25 @@ mod tests {
         assert!(igpu.is_unified());
         assert!(igpu.full_cpu_access());
         assert_eq!(igpu.to_string(), "16 GiB unified");
+    }
+
+    #[test]
+    fn radv_on_an_apu_is_shared_memory() {
+        // The Radeon 680M under RADV: a device-local heap the CPU maps
+        // entirely, but one device-local-only type, so not "unified".
+        let apu = memory(
+            &[(2_932_359_168, false), (5_864_722_432, true)],
+            &[(DL, 1), (HV, 0), (DL | HV, 1), (HV | flags::HOST_CACHED, 0)],
+        );
+        assert!(!apu.is_unified());
+        assert_eq!(
+            apu.to_string(),
+            "5.46 GiB VRAM, all CPU-visible, 2.73 GiB host"
+        );
+        assert_eq!(
+            apu.summary(true),
+            "5.46 GiB shared with system RAM, all CPU-visible, 2.73 GiB host"
+        );
     }
 
     #[test]

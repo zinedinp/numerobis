@@ -117,6 +117,12 @@ impl DeviceInfo {
         Self::from_header(header)
     }
 
+    /// A GPU in the CPU package, sharing system RAM.
+    #[must_use]
+    pub fn is_integrated(&self) -> bool {
+        self.device_type == DeviceType::IntegratedGpu
+    }
+
     /// Vendor and architecture by the PCI ids.
     #[must_use]
     pub fn gpu(&self) -> Gpu {

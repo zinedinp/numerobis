@@ -8,7 +8,7 @@ const AREA: Area = Area::Pipeline;
 
 pub const EXTENDED_DYNAMIC_STATE: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "extended_dynamic_state",
     doc: "cull mode, front face, topology, depth state ... set per draw",
@@ -24,7 +24,7 @@ pub const EXTENDED_DYNAMIC_STATE: Spec = Spec {
 
 pub const EXTENDED_DYNAMIC_STATE2: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "extended_dynamic_state2",
     doc: "rasterizer discard, depth bias and primitive restart set per draw (logic op and \
@@ -41,7 +41,7 @@ pub const EXTENDED_DYNAMIC_STATE2: Spec = Spec {
 
 pub const GRAPHICS_PIPELINE_LIBRARY: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "graphics_pipeline_library",
     doc: "pipelines linked from precompiled parts (fewer compile stalls)",
@@ -54,7 +54,7 @@ pub const GRAPHICS_PIPELINE_LIBRARY: Spec = Spec {
 
 pub const SHADER_OBJECT: Spec = Spec {
     area: AREA,
-    support: Support::UNTESTED,
+    support: Support::LINUX_TESTED,
     needs: &[Capability::DynamicRendering],
     name: "shader_object",
     doc: "shaders bound without pipelines, all state dynamic",
@@ -67,7 +67,7 @@ pub const SHADER_OBJECT: Spec = Spec {
 
 pub const MAINTENANCE4: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "maintenance4",
     doc: "maintenance4: LocalSizeId, memory requirements without objects, ...",
@@ -83,7 +83,7 @@ pub const MAINTENANCE4: Spec = Spec {
 
 pub const MAINTENANCE5: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "maintenance5",
     doc: "maintenance5: pipelines from shader module infos, vkCmdBindIndexBuffer2, ...",
@@ -99,7 +99,7 @@ pub const MAINTENANCE5: Spec = Spec {
 
 pub const MAINTENANCE6: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "maintenance6",
     doc: "maintenance6: vkCmdBindDescriptorSets2, null index buffers, ...",

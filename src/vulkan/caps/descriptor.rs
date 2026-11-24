@@ -22,7 +22,7 @@ const AREA: Area = Area::Descriptor;
 
 pub const BINDLESS_TEXTURES: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "bindless_textures",
     doc: "unsized, partly bound image arrays indexed per fragment",
@@ -34,7 +34,7 @@ pub const BINDLESS_TEXTURES: Spec = Spec {
 
 pub const BINDLESS_BUFFERS: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "bindless_buffers",
     doc: "unsized, partly bound storage buffer arrays indexed per invocation",
@@ -46,7 +46,7 @@ pub const BINDLESS_BUFFERS: Spec = Spec {
 
 pub const PUSH_DESCRIPTOR: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "push_descriptor",
     doc: "descriptors written into the command buffer, no sets",
@@ -60,7 +60,7 @@ const NULL: &[&str] = &["nullDescriptor"];
 
 pub const NULL_DESCRIPTOR: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "null_descriptor",
     doc: "VK_NULL_HANDLE descriptors that read zeros (holes in bindless arrays)",
@@ -72,7 +72,7 @@ pub const NULL_DESCRIPTOR: Spec = Spec {
 
 pub const DESCRIPTOR_BUFFER: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[Capability::BufferDeviceAddress],
     name: "descriptor_buffer",
     doc: "descriptors written into buffers by the host (deprecated by VK_EXT_descriptor_heap)",

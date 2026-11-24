@@ -8,7 +8,7 @@ const AREA: Area = Area::Draw;
 
 pub const MULTI_DRAW_INDIRECT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "multi_draw_indirect",
     doc: "many indirect draws per call, each with its own firstInstance",
@@ -17,7 +17,7 @@ pub const MULTI_DRAW_INDIRECT: Spec = Spec {
 
 pub const SHADER_DRAW_PARAMETERS: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "shader_draw_parameters",
     doc: "gl_DrawID, gl_BaseInstance and gl_BaseVertex in shaders",
@@ -34,7 +34,7 @@ pub const SHADER_DRAW_PARAMETERS: Spec = Spec {
 
 pub const DRAW_INDIRECT_COUNT: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "draw_indirect_count",
     doc: "draw counts the GPU writes (vkCmdDrawIndexedIndirectCount)",
@@ -46,7 +46,7 @@ pub const DRAW_INDIRECT_COUNT: Spec = Spec {
 
 pub const INDEX_TYPE_UINT8: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "index_type_uint8",
     doc: "8-bit index buffers",
@@ -69,7 +69,7 @@ const DIVISOR: &[&str] = &["vertexAttributeInstanceRateDivisor"];
 
 pub const VERTEX_ATTRIBUTE_DIVISOR: Spec = Spec {
     area: AREA,
-    support: Support::WINDOWS_TESTED,
+    support: Support::TESTED,
     needs: &[],
     name: "vertex_attribute_divisor",
     doc: "instanced vertex attributes that advance every N instances",
