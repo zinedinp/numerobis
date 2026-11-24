@@ -164,6 +164,13 @@ impl Signals {
         (a != 0 && b >= a).then_some((a, b))
     }
 
+    /// The timestamps in fence `f`'s slot as they are, unchecked.
+    pub(crate) fn raw_timestamps(&self, f: u64) -> (u64, u64) {
+        let v = view(&self.bo);
+        let at = Self::slot(f) * sig::SIZE;
+        (v.read64(at + sig::START_TS), v.read64(at + sig::END_TS))
+    }
+
     pub fn free(self, gpu: &Gpu) {
         gpu.free(self.bo);
     }

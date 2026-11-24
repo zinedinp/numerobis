@@ -39,6 +39,11 @@ static GFX908: &[u8] = include_bytes!("../../kernels/bin/amd/gfx908-emulated.hsa
 static GFX90A: &[u8] = include_bytes!("../../kernels/bin/amd/gfx90a-emulated.hsaco");
 static GFX942: &[u8] = include_bytes!("../../kernels/bin/amd/gfx942-emulated.hsaco");
 static GFX950: &[u8] = include_bytes!("../../kernels/bin/amd/gfx950-emulated.hsaco");
+static GFX9: &[u8] = include_bytes!("../../kernels/bin/amd/gfx9-generic-emulated.hsaco");
+static GFX9_4: &[u8] = include_bytes!("../../kernels/bin/amd/gfx9-4-generic-emulated.hsaco");
+static RDNA1: &[u8] = include_bytes!("../../kernels/bin/amd/gfx10-1-generic-emulated.hsaco");
+static GFX11: &[u8] = include_bytes!("../../kernels/bin/amd/gfx11-generic-emulated.hsaco");
+static GFX12: &[u8] = include_bytes!("../../kernels/bin/amd/gfx12-generic-emulated.hsaco");
 
 /// Work-group size of every launch (the shared kernels allow 256).
 const GROUP: u16 = 256;
@@ -50,6 +55,23 @@ const SDMA: u64 = 1 << 62;
 const SELF_TEST: Duration = Duration::from_secs(2);
 /// Staging kept for reuse, at most this many bytes.
 const POOL_BYTES: u64 = 256 << 20;
+/// Uploads and downloads go through staging chunks of this many bytes.
+const CHUNK: usize = 32 << 20;
+/// Upload chunks in flight before the host waits for the oldest: the pool's
+/// worth.
+const IN_FLIGHT: usize = (POOL_BYTES / CHUNK as u64) as usize;
+
+/// What a staging buffer for `len` bytes is allocated as, so that it fits
+/// later copies of about that size: a power of two up to 64 MiB, a
+/// multiple of 64 MiB above (a power of two would waste up to half).
+fn staging_size(len: u64) -> u64 {
+    const STEP: u64 = 64 << 20;
+    if len <= STEP {
+        len.next_power_of_two().max(4096)
+    } else {
+        len.next_multiple_of(STEP)
+    }
+}
 
 /// Staging buffers kept for the next copies: allocating one costs four
 /// ioctls and a page fault per page on first touch.
@@ -74,8 +96,7 @@ impl Pool {
             self.bytes -= b.size;
             return Ok(b);
         }
-        // Sizes rounded up to a power of two, so buffers fit again.
-        gpu.alloc(len.next_power_of_two().max(4096), Kind::Staging)
+        gpu.alloc(staging_size(len), Kind::Staging)
     }
 
     /// Keeps `bo` for reuse, or frees it when the pool is full.
@@ -137,18 +158,26 @@ impl CopyEngine {
     }
 }
 
-/// The code object and matrix tier for a `gfx_target_version`; `None`
-/// where no binary is built for it.
+/// The code object and matrix tier for a `gfx_target_version`
+/// (`major * 10000 + minor * 100 + stepping`, the last two in hex digits:
+/// gfx90c is 90012); `None` where no binary is built for it. A target's
+/// own binary first, else its family's generic one.
 #[must_use]
 pub fn select(gfx_target_version: u32) -> Option<(&'static [u8], Option<AmdTier>)> {
     Some(match gfx_target_version {
-        100_300..=100_306 => (RDNA2, None),
-        110_000 => (GFX1100, Some(AmdTier::Gfx11)),
-        120_000 | 120_001 => (GFX1200, Some(AmdTier::Gfx12)),
+        // Vega: gfx900, 902, 904, 906, 909, 90c; no matrix engine.
+        90000 | 90002 | 90004 | 90006 | 90009 | 90012 => (GFX9, None),
         90008 => (GFX908, Some(AmdTier::Gfx908)),
         90010 => (GFX90A, Some(AmdTier::Gfx90a)),
+        90400 | 90401 => (GFX9_4, Some(AmdTier::Gfx942)),
         90402 => (GFX942, Some(AmdTier::Gfx942)),
         90500 => (GFX950, Some(AmdTier::Gfx950)),
+        100_100..=100_103 => (RDNA1, None),
+        100_300..=100_306 => (RDNA2, None),
+        110_000 => (GFX1100, Some(AmdTier::Gfx11)),
+        110_001..=110_003 | 110_500..=110_503 => (GFX11, Some(AmdTier::Gfx11)),
+        120_000 => (GFX1200, Some(AmdTier::Gfx12)),
+        120_001 => (GFX12, Some(AmdTier::Gfx12)),
         _ => return None,
     })
 }
@@ -164,8 +193,13 @@ struct Buf {
 enum Staged {
     /// Copied by the host already.
     Host(Vec<u8>),
-    /// In a staging buffer once the copy fence signals.
-    Device { bo: Bo, len: usize, fence: u64 },
+    /// In staging buffers, chunk after chunk, once the last copy's fence
+    /// signals.
+    Device {
+        pieces: Vec<(Bo, usize)>,
+        len: usize,
+        fence: u64,
+    },
 }
 
 struct State {
@@ -514,6 +548,24 @@ impl AmdBackend {
         }
     }
 
+    /// Waits until fewer than [`IN_FLIGHT`] upload chunks are in flight.
+    fn make_room(&self, s: &mut State) -> Result<()> {
+        while s.retire.len() >= IN_FLIGHT {
+            let oldest = s.retire.iter().map(|(f, _)| *f).min().unwrap_or(0);
+            if let Some(e) = s.sdma.as_mut() {
+                e.wait(oldest, Duration::from_secs(60))?;
+            }
+            self.reap(s);
+        }
+        Ok(())
+    }
+
+    fn give_back(gpu: &Gpu, s: &mut State, pieces: Vec<(Bo, usize)>) {
+        for (bo, _) in pieces {
+            s.pool.give(gpu, bo);
+        }
+    }
+
     fn host_fence(s: &mut State) -> Fence {
         s.next += 1;
         Fence(HOST | s.next)
@@ -527,7 +579,15 @@ impl Backend for AmdBackend {
 
     fn alloc(&self, bytes: usize) -> Result<BufId> {
         let size = bytes as u64;
-        let bo = match self.gpu.alloc(size, Kind::Vram) {
+        // Device memory the CPU can map, else (with SDMA, which reaches all
+        // of it: a discrete card with a small BAR) device memory it can't,
+        // else system memory.
+        let sdma = self.copies != CopyEngine::Cpu;
+        let mut bo = self.gpu.alloc(size, Kind::Vram);
+        if sdma && matches!(bo, Err(Error::OutOfMemory { .. })) {
+            bo = self.gpu.alloc(size, Kind::VramPrivate);
+        }
+        let bo = match bo {
             Err(Error::OutOfMemory { .. }) => self.gpu.alloc(size, Kind::Gtt)?,
             r => r?,
         };
@@ -556,34 +616,39 @@ impl Backend for AmdBackend {
             if src.is_empty() {
                 return Ok(Self::host_fence(s));
             }
-            let staging = s.pool.take(&self.gpu, src.len() as u64)?;
-            staging
-                .cpu()
-                .expect("staging is CPU-mapped")
-                .write_bytes(0, src);
-            let e = s.sdma.as_mut().expect("checked above");
-            let copied = sdma_copy(
-                &mut s.q,
-                e,
-                after,
-                &[sdma::Copy {
-                    dst,
+            // In chunks through kept staging: the host fills one while the
+            // engine copies the ones before.
+            let mut span = None;
+            for (i, piece) in src.chunks(CHUNK).enumerate() {
+                self.make_room(s)?;
+                let staging = s.pool.take(&self.gpu, piece.len() as u64)?;
+                staging
+                    .cpu()
+                    .expect("staging is CPU-mapped")
+                    .write_bytes(0, piece);
+                let e = s.sdma.as_mut().expect("checked above");
+                let copy = sdma::Copy {
+                    dst: dst + (i * CHUNK) as u64,
                     src: staging.va,
-                    bytes: src.len() as u64,
-                }],
-            );
-            let f = match copied {
-                Ok(f) => f,
-                Err(err) => {
-                    s.pool.give(&self.gpu, staging);
-                    return Err(err);
+                    bytes: piece.len() as u64,
+                };
+                match sdma_copy(&mut s.q, e, after, &[copy]) {
+                    Ok(f) => {
+                        s.retire.push((f, staging));
+                        span = Some((span.map_or(f, |(first, _)| first), f));
+                    }
+                    Err(err) => {
+                        s.pool.give(&self.gpu, staging);
+                        return Err(err);
+                    }
                 }
-            };
-            s.retire.push((f, staging));
-            if let Some(b) = s.bufs.get_mut(&id.0) {
-                b.sdma = f;
             }
-            Ok(Fence(SDMA | f))
+            let (first, last) = span.expect("a non-empty upload has a chunk");
+            s.sdma.as_mut().expect("checked above").join(first, last);
+            if let Some(b) = s.bufs.get_mut(&id.0) {
+                b.sdma = last;
+            }
+            Ok(Fence(SDMA | last))
         })
     }
 
@@ -605,37 +670,49 @@ impl Backend for AmdBackend {
                 let b = Self::range(s, id, offset, len)?;
                 (b.bo.va + offset as u64, b.compute)
             };
-            let staging = s.pool.take(&self.gpu, len as u64)?;
-            let e = s.sdma.as_mut().expect("checked above");
-            let copied = sdma_copy(
-                &mut s.q,
-                e,
-                after,
-                &[sdma::Copy {
+            let mut pieces: Vec<(Bo, usize)> = Vec::new();
+            let mut span = None;
+            let mut done = 0;
+            while done < len {
+                let n = (len - done).min(CHUNK);
+                let staging = match s.pool.take(&self.gpu, n as u64) {
+                    Ok(b) => b,
+                    Err(err) => {
+                        Self::give_back(&self.gpu, s, pieces);
+                        return Err(err);
+                    }
+                };
+                let e = s.sdma.as_mut().expect("checked above");
+                let copy = sdma::Copy {
                     dst: staging.va,
-                    src,
-                    bytes: len as u64,
-                }],
-            );
-            let f = match copied {
-                Ok(f) => f,
-                Err(err) => {
-                    s.pool.give(&self.gpu, staging);
-                    return Err(err);
+                    src: src + done as u64,
+                    bytes: n as u64,
+                };
+                match sdma_copy(&mut s.q, e, after, &[copy]) {
+                    Ok(f) => span = Some((span.map_or(f, |(first, _)| first), f)),
+                    Err(err) => {
+                        pieces.push((staging, n));
+                        Self::give_back(&self.gpu, s, pieces);
+                        return Err(err);
+                    }
                 }
-            };
+                pieces.push((staging, n));
+                done += n;
+            }
+            let (first, last) = span.expect("a non-empty download has a chunk");
+            s.sdma.as_mut().expect("checked above").join(first, last);
             if let Some(b) = s.bufs.get_mut(&id.0) {
-                b.sdma = f;
+                b.sdma = last;
             }
             s.downloads.insert(
-                SDMA | f,
+                SDMA | last,
                 Staged::Device {
-                    bo: staging,
+                    pieces,
                     len,
-                    fence: f,
+                    fence: last,
                 },
             );
-            Ok(Fence(SDMA | f))
+            Ok(Fence(SDMA | last))
         })
     }
 
@@ -651,7 +728,7 @@ impl Backend for AmdBackend {
                 dst.copy_from_slice(&out);
                 Ok(())
             }
-            Staged::Device { bo, len, fence } => {
+            Staged::Device { pieces, len, fence } => {
                 let r = self.with(|s| {
                     s.sdma
                         .as_mut()
@@ -659,15 +736,19 @@ impl Backend for AmdBackend {
                         .wait(fence, Duration::from_secs(60))
                 });
                 let r = r.and_then(|()| {
-                    if len == dst.len() {
-                        bo.cpu().expect("staging is CPU-mapped").read_bytes(0, dst);
-                        Ok(())
-                    } else {
-                        Err(Error::InvalidArgument("download size mismatch".into()))
+                    if len != dst.len() {
+                        return Err(Error::InvalidArgument("download size mismatch".into()));
                     }
+                    let mut at = 0;
+                    for (bo, n) in &pieces {
+                        let cpu = bo.cpu().expect("staging is CPU-mapped");
+                        cpu.read_bytes(0, &mut dst[at..at + n]);
+                        at += n;
+                    }
+                    Ok(())
                 });
                 let _ = self.with(|s| {
-                    s.pool.give(&self.gpu, bo);
+                    Self::give_back(&self.gpu, s, pieces);
                     Ok(())
                 });
                 r
@@ -786,11 +867,20 @@ impl Backend for AmdBackend {
     }
 
     fn elapsed(&self, fence: Fence) -> Option<Duration> {
-        if fence.0 & (HOST | SDMA) != 0 {
+        if fence.0 & HOST != 0 {
             return None;
         }
         let per_ns = self.tick_ns?;
-        let (a, b) = self.with(|s| Ok(s.q.timestamps(fence.0))).ok()??;
+        // CP and SDMA timestamps count the same global clock.
+        let (a, b) = self
+            .with(|s| {
+                Ok(if fence.0 & SDMA != 0 {
+                    s.sdma.as_mut().and_then(|e| e.timestamps(fence.0 & !SDMA))
+                } else {
+                    s.q.timestamps(fence.0)
+                })
+            })
+            .ok()??;
         Some(Duration::from_nanos(((b - a) as f64 / per_ns) as u64))
     }
 
@@ -836,8 +926,10 @@ impl Drop for AmdBackend {
                 self.gpu.free(bo);
             }
             for (_, d) in s.downloads {
-                if let Staged::Device { bo, .. } = d {
-                    self.gpu.free(bo);
+                if let Staged::Device { pieces, .. } = d {
+                    for (bo, _) in pieces {
+                        self.gpu.free(bo);
+                    }
                 }
             }
             for bo in s.pool.free {
@@ -857,7 +949,8 @@ mod tests {
     #[test]
     fn every_built_target_parses_and_needs_no_scratch() {
         for v in [
-            100_300, 100_305, 110_000, 120_000, 90008, 90010, 90402, 90500,
+            90000, 90012, 90008, 90010, 90400, 90402, 90500, 100_100, 100_300, 100_305, 110_000,
+            110_003, 110_501, 120_000, 120_001,
         ] {
             let (image, _) = select(v).unwrap();
             let p = Program::parse(image).unwrap();
@@ -871,9 +964,24 @@ mod tests {
                 assert!(p.kernel(s).is_some(), "{v}: {s}");
             }
         }
-        // gfx1101..gfx1103 differ from gfx1100 in register files: no guess.
-        assert!(select(110_003).is_none());
-        assert!(select(100_100).is_none());
+        // Each family's waves: 64 on GCN and CDNA, 32 on RDNA.
+        let wave = |v| Program::parse(select(v).unwrap().0).unwrap().kernels[0].wavefront;
+        assert_eq!(
+            (wave(90012), wave(90402), wave(100_100), wave(110_501)),
+            (64, 64, 32, 32)
+        );
+        // gfx8 and older, and what no family covers, are refused.
+        assert!(select(80003).is_none());
+        assert!(select(100_200).is_none());
+    }
+
+    #[test]
+    fn staging_sizes_fit_again_without_wasting_half() {
+        assert_eq!(staging_size(1), 4096);
+        assert_eq!(staging_size(48 << 20), 64 << 20);
+        assert_eq!(staging_size((64 << 20) + 1), 128 << 20);
+        // 1.25 GiB: 1.25 GiB, not 2.
+        assert_eq!(staging_size(5 << 28), 5 << 28);
     }
 
     #[test]

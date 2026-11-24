@@ -20,7 +20,7 @@ and out are `Stream::upload` / `upload_packed` and `Stream::download`.
 | NVIDIA | `nvidia` | raw: RM + UVM ioctls, GPFIFO, QMD | Ampere (sm_80/86), Ada (sm_89) | Emulated | **working**, bit-exact on RTX 3080 |
 | Tenstorrent | `tt` | raw: tt-kmd, TLB windows, NoC | Blackhole | Emulated (one Tensix core, soft-float) | implemented; kernel code verified under qemu, on-card validation pending |
 | Intel GPU | `intel` | raw: `xe` | Xe-LP ... Xe2 | - | planned |
-| AMD GPU | `amd` | raw: KFD, AQL queue, SDMA queue, doorbells, signals | RDNA 2 (gfx10.3, `gfx10-3-generic`); gfx1100, gfx1200, gfx908 ... gfx950 built | Emulated | **working**, bit-exact on Radeon 680M (gfx1035); other targets load-checked only |
+| AMD GPU | `amd` | raw: KFD, AQL queue, SDMA queue, doorbells, signals | gfx9 (Vega) ... gfx12 (RDNA 4), CDNA 1 to 4: specific or per-family generic code objects | Emulated | **working**, bit-exact on Radeon 680M (gfx1035); other targets load-checked only |
 | NPUs | `accel`, `xdna` | raw: `accel` subsystem | Intel NPU, AMD XDNA, RK3588, Ethos-U | - | planned |
 | Raspberry Pi | `v3d` | raw: `v3d` | Pi 4/5 | - | planned |
 | Vulkan, CUDA, HIP | `vulkan`, `cuda`, `hip` | comfort (vendor or portable user space) | any | - | planned (the Vulkan feature waterfall for graphics hosts is done, see below) |
@@ -571,9 +571,16 @@ native matrix tiers will get per-tier tolerances.
 
   With SDMA, each buffer keeps its last compute and copy fence: copies wait
   for kernels and kernels for copies on the GPU (`POLL_REGMEM` / AQL
-  barrier), the host never blocks in between. Staging is pooled (256 MiB).
-  On the 680M, 48 MiB up and down: SDMA 2.5 GB/s with kept staging (1.7 the
-  first time), CPU 2.3 GB/s. Other systems reach the copy engine only through
+  barrier), the host never blocks in between. Copies go through 32 MiB
+  staging chunks from a pool (256 MiB), so the host fills one while the
+  engine copies the others, and any size works (1.06 GiB tested, into
+  system memory when VRAM is too small). With SDMA, buffers that don't fit
+  CPU-visible VRAM go to VRAM the CPU can't see before system memory.
+  Copies are timed (`Pending::elapsed`) by SDMA `TIMESTAMP` packets on the
+  same clock as the kernels.
+  On the 680M: 64 MiB down in 4.6 to 7 ms on the engine; 48 MiB up and down
+  2.2 to 2.5 GB/s with SDMA, 2.5 GB/s with the CPU (an APU: no bus between).
+  Other systems reach the copy engine only through
   their graphics APIs (D3D12 copy queues, Metal blit encoders, Vulkan transfer
   queues); a user-mode queue like KFD's exists on Linux alone.
 - `NUMEROBIS_AMD_TRACE=1` prints every KFD call that fails, and the queue's
@@ -637,9 +644,10 @@ Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
   backend first.
 - **Tenstorrent:** spread work over all Tensix tiles, then the FPU matrix tier
   with native BFP8/4/2 and BF16; Wormhole.
-- **AMD:** the MFMA / WMMA tiers (`nb_amd.h`) on CDNA and RDNA 3/4, SDMA
-  timestamps for copy timing, and runs on more than the 680M (SDMA 4, 6 and 7
-  use the same packets, untested).
+- **AMD:** the MFMA / WMMA tiers (`nb_amd.h`) on CDNA and RDNA 3/4, and
+  runs on more than the 680M: the code objects for Vega, RDNA 1/3/4 and CDNA
+  load, and SDMA 4, 6 and 7 get the same packets (SDMA 7 with copies a little
+  under 4 MiB), but only gfx1035 with SDMA 5.2 has run.
 - **Intel** (`xe`: COMPUTE_WALKER, XMX/DPAS), **NPUs** (Intel NPU, AMD XDNA, RK3588, Ethos-U) with dma-buf
   sharing between iGPU and NPU, **Raspberry Pi** (`v3d` QPU code generation).
 - **Comfort `vulkan`** backend as the universal fallback: the cooperative

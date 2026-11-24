@@ -5,9 +5,11 @@
 //! compute queue (ring, `amd_queue_t`, doorbell, completion signals), copies
 //! on the SDMA engine (a user-mode queue, or the driver's ring; see
 //! [`backend::CopyEngine`]), and
-//! the shared Emulated kernels from `kernels/bin/amd` (`gfx10-3-generic` for
-//! all of RDNA 2, `gfx1100`, `gfx1200`, CDNA `gfx908` to `gfx950`). No `ROCm`
-//! user space. MFMA/WMMA tiers (`nb_amd.h`) are the next step.
+//! the shared Emulated kernels from `kernels/bin/amd`: the specific
+//! `gfx908`, `gfx90a`, `gfx942`, `gfx950`, `gfx1100`, `gfx1200`, and one
+//! generic code object per family for the rest (`gfx9-generic` for Vega,
+//! `gfx9-4-generic`, `gfx10-1-generic`, `gfx10-3-generic`, `gfx11-generic`
+//! for RDNA 3 and 3.5, `gfx12-generic`). No `ROCm` user space. MFMA/WMMA tiers (`nb_amd.h`) are the next step.
 //!
 //! | Module | Contents |
 //! |---|---|

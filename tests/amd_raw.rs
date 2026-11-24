@@ -15,6 +15,7 @@
 mod common;
 
 use std::os::fd::AsFd;
+use std::time::Duration;
 
 use common::*;
 use numerobis::amd::backend::CopyEngine;
@@ -237,5 +238,63 @@ fn copies_and_kernels_keep_their_order_without_waiting() {
         let relu = |v: &[f32]| v.iter().map(|v| v.max(0.0)).collect::<Vec<_>>();
         assert!(got_y.wait().unwrap().to_vec() == relu(&a), "{e:?}: y");
         assert!(got_z.wait().unwrap().to_vec() == relu(&b), "{e:?}: z");
+    }
+}
+
+#[test]
+fn copies_are_timed_on_the_gpu_clock() {
+    for (e, dev) in engines() {
+        let mut s = dev.stream();
+        let x = s.upload::<F32>(&vec![1.5; 16 << 20]).unwrap();
+        let t = std::time::Instant::now();
+        let (back, elapsed) = s.download(&x).unwrap().wait_elapsed().unwrap();
+        let wall = t.elapsed();
+        assert!(back.to_vec().iter().all(|v| v.to_bits() == 1.5f32.to_bits()));
+        match (e, elapsed) {
+            // The host copies itself: nothing for the GPU to time.
+            (CopyEngine::Cpu, el) => assert_eq!(el, None),
+            (_, Some(el)) => {
+                eprintln!("{e:?}: 64 MiB down in {el:?} on the GPU, {wall:?} on the host");
+                // The same clock as the CP's: within what the host saw.
+                assert!(
+                    el > Duration::ZERO && el <= wall,
+                    "{e:?}: {el:?} vs {wall:?}"
+                );
+            }
+            (_, None) => panic!("{e:?}: no timestamps for an SDMA copy"),
+        }
+    }
+}
+
+/// Over 1 GiB: more than one submission (256 packets of 4 MiB), the
+/// timestamps across them, a buffer the 680M's 1 GiB of VRAM can't hold
+/// (system memory then). Needs about 6 GiB of RAM:
+/// `cargo test --features amd --test amd_raw -- --ignored`.
+#[test]
+#[ignore = "needs about 6 GiB of RAM"]
+fn copies_over_one_gib() {
+    for (e, dev) in engines() {
+        let mut s = dev.stream();
+        let n = ((1 << 30) + (64 << 20)) / 4 + 5;
+        let vals: Vec<f32> = (0..n).map(|i| (i % 65_521) as f32).collect();
+        let t = std::time::Instant::now();
+        let x = s.upload::<F32>(&vals).unwrap();
+        let (back, elapsed) = s.download(&x).unwrap().wait_elapsed().unwrap();
+        let took = t.elapsed();
+        let back = back.to_vec();
+        assert_eq!(back.len(), n);
+        if let Some(i) = back.iter().zip(&vals).position(|(a, b)| a.to_bits() != b.to_bits()) {
+            panic!("{e:?}: element {i} differs");
+        }
+        eprintln!(
+            "{e:?}: {:.2} GiB up and down in {took:?} (download on the GPU: {elapsed:?})",
+            (n * 4) as f64 / f64::from(1 << 30)
+        );
+        if e != CopyEngine::Cpu {
+            assert!(
+                elapsed.is_some(),
+                "{e:?}: the span of several submissions is timed"
+            );
+        }
     }
 }

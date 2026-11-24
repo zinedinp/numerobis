@@ -32,13 +32,16 @@ pub mod packet {
     pub const OP_COPY: u32 = 1;
     pub const OP_POLL_REGMEM: u32 = 8;
     pub const OP_ATOMIC: u32 = 10;
+    pub const OP_TIMESTAMP: u32 = 13;
     pub const SUBOP_COPY_LINEAR: u32 = 0;
+    /// `TIMESTAMP` sub-op 2: the GPU's global timestamp counter.
+    pub const SUBOP_TIMESTAMP_GET_GLOBAL: u32 = 2;
     /// `SDMA_ATOMIC_ADD64`: the TC opcode of a 64-bit add.
     pub const ATOMIC_ADD64: u32 = 47;
     /// `POLL_REGMEM` function 3: until `(*addr & mask) == value`.
     pub const FUNC_EQUAL: u32 = 3;
-    /// The largest linear copy: `count` is `bytes - 1` in 22 bits
-    /// (`copy_max_bytes` of amdgpu's SDMA 4 to 7).
+    /// The largest linear copy on SDMA 4 to 6: `count` is `bytes - 1` in
+    /// 22 bits (amdgpu's `copy_max_bytes`).
     pub const MAX_COPY: u64 = 1 << 22;
 
     fn lo(v: u64) -> u32 {
@@ -93,14 +96,60 @@ pub mod packet {
         ]
     }
 
+    /// `TIMESTAMP` (`GET_GLOBAL`): the 64-bit global timestamp to `addr`
+    /// (8-byte aligned).
+    #[must_use]
+    pub fn timestamp(addr: u64) -> [u32; 3] {
+        debug_assert!(addr.is_multiple_of(8));
+        [
+            OP_TIMESTAMP | (SUBOP_TIMESTAMP_GET_GLOBAL << 8),
+            lo(addr),
+            hi(addr),
+        ]
+    }
+
     /// One-dword `NOP`.
     pub const NOP: u32 = OP_NOP;
 }
 
+/// The SDMA generation of a `gfx_target_version`: 4 on gfx9 and CDNA, 5 on
+/// RDNA 1 and 2, 6 on RDNA 3, 7 on RDNA 4. `None` before gfx9 (SDMA 2 and
+/// 3 keep 32-bit ring pointers, which this queue doesn't do).
+#[must_use]
+pub fn version(gfx_target_version: u32) -> Option<u32> {
+    Some(match gfx_target_version / 10000 {
+        9 => 4,
+        10 => 5,
+        11 => 6,
+        12 => 7,
+        _ => return None,
+    })
+}
+
+/// The largest linear copy on SDMA `version`. SDMA 7 gets a little less
+/// than 4 MiB, a 32-byte multiple: its limit isn't documented, and smaller
+/// copies cost nothing but packets.
+#[must_use]
+pub fn max_copy(version: u32) -> u64 {
+    if version >= 7 {
+        packet::MAX_COPY - 256
+    } else {
+        packet::MAX_COPY
+    }
+}
+
+/// Timestamps a submission writes: before its copies, after them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Stamps {
+    pub start: Option<u64>,
+    pub end: Option<u64>,
+}
+
 /// Linear copies per submission; a larger copy takes several.
 const COPIES_PER_SUBMIT: usize = 256;
-/// Dwords one submission can take: a wait, the copies, the signal, padding.
-const SUBMIT_DWORDS: usize = 6 + 7 * COPIES_PER_SUBMIT + 8 + 8;
+/// Dwords one submission can take: a wait, two timestamps, the copies, the
+/// signal, padding.
+const SUBMIT_DWORDS: usize = 6 + 3 + 7 * COPIES_PER_SUBMIT + 3 + 8 + 8;
 /// Indirect buffer bytes per signal slot ([`Route::Drm`]).
 const IB_SLOT: u64 = (SUBMIT_DWORDS as u64 * 4).next_multiple_of(4096);
 /// Bytes of the user-mode ring ([`Route::Kfd`]), a power of two.
@@ -124,29 +173,41 @@ pub struct Copy {
 }
 
 /// The packets of one submission: an optional wait on a compute signal's
-/// value address, the copies split to [`packet::MAX_COPY`], the decrement
-/// of `signal`.
+/// value address, the start timestamp, the copies split to `max` bytes, the
+/// end timestamp, the decrement of `signal_value`.
 #[must_use]
-pub fn build(wait: Option<u64>, copies: &[Copy], signal_value: u64) -> Vec<u32> {
+pub fn build(
+    wait: Option<u64>,
+    copies: &[Copy],
+    max: u64,
+    stamps: Stamps,
+    signal_value: u64,
+) -> Vec<u32> {
     let mut d = Vec::with_capacity(SUBMIT_DWORDS);
     if let Some(addr) = wait {
         d.extend(packet::wait_equal(addr, 0));
     }
+    if let Some(at) = stamps.start {
+        d.extend(packet::timestamp(at));
+    }
     for c in copies {
         let mut done = 0;
         while done < c.bytes {
-            let n = (c.bytes - done).min(packet::MAX_COPY);
+            let n = (c.bytes - done).min(max);
             d.extend(packet::copy(c.dst + done, c.src + done, n));
             done += n;
         }
+    }
+    if let Some(at) = stamps.end {
+        d.extend(packet::timestamp(at));
     }
     d.extend(packet::add64(signal_value, -1));
     d
 }
 
 /// Splits `copies` so that no submission holds more than
-/// [`COPIES_PER_SUBMIT`] copy packets.
-fn groups(copies: &[Copy]) -> Vec<Vec<Copy>> {
+/// [`COPIES_PER_SUBMIT`] copy packets of `max` bytes.
+fn groups(copies: &[Copy], max: u64) -> Vec<Vec<Copy>> {
     let mut out = vec![Vec::new()];
     let mut packets = 0;
     for c in copies {
@@ -156,14 +217,14 @@ fn groups(copies: &[Copy]) -> Vec<Vec<Copy>> {
                 out.push(Vec::new());
                 packets = 0;
             }
-            let room = (COPIES_PER_SUBMIT - packets) as u64 * packet::MAX_COPY;
+            let room = (COPIES_PER_SUBMIT - packets) as u64 * max;
             let n = (c.bytes - done).min(room);
             out.last_mut().expect("one group").push(Copy {
                 dst: c.dst + done,
                 src: c.src + done,
                 bytes: n,
             });
-            packets += n.div_ceil(packet::MAX_COPY) as usize;
+            packets += n.div_ceil(max) as usize;
             done += n;
         }
     }
@@ -378,8 +439,14 @@ enum Way {
 /// The SDMA engine of one GPU, reached by [`Route`].
 pub struct Sdma {
     pub route: Route,
+    /// The engine's generation ([`version`]).
+    pub version: u32,
+    max_copy: u64,
     pub(crate) signals: Signals,
     way: Way,
+    /// Copies of several submissions, as (first, last) fence: the first
+    /// one's slot holds the start timestamp.
+    spans: std::collections::VecDeque<(u64, u64)>,
 }
 
 impl Sdma {
@@ -388,6 +455,9 @@ impl Sdma {
     /// [`Error::Unsupported`] for a GPU without SDMA engines; errors of KFD
     /// or DRM pass through.
     pub fn new(gpu: &Gpu, route: Route) -> Result<Sdma> {
+        let version = version(gpu.node.gfx_target_version).ok_or_else(|| {
+            Error::Unsupported(format!("SDMA of {} (before gfx9)", gpu.node.gfx()))
+        })?;
         if gpu.node.sdma_engines == 0 {
             return Err(Error::Unsupported(format!(
                 "{} has no SDMA engine",
@@ -402,8 +472,11 @@ impl Sdma {
         match way {
             Ok(way) => Ok(Sdma {
                 route,
+                version,
+                max_copy: max_copy(version),
                 signals,
                 way,
+                spans: std::collections::VecDeque::new(),
             }),
             Err(e) => {
                 signals.free(gpu);
@@ -456,21 +529,76 @@ impl Sdma {
         mut before_arm: impl FnMut(u64) -> Result<()>,
     ) -> Result<u64> {
         let mut last = self.signals.last;
+        let mut first = None;
         let mut wait = wait;
-        for group in groups(copies) {
+        let groups = groups(copies, self.max_copy);
+        let n = groups.len();
+        for (i, group) in groups.into_iter().enumerate() {
             before_arm(self.signals.next_consumer())?;
             let route = self.route;
             let (f, signal) = self
                 .signals
                 .arm(|s| format!("SDMA ({route:?}): slot of fence {} busy", s.last + 1))?;
-            let dwords = build(wait.take(), &group, signal + sys::signal::VALUE as u64);
+            let first = *first.get_or_insert(f);
+            // The start in the first submission's slot, the end in the last's.
+            let stamps = Stamps {
+                start: (i == 0).then_some(signal + sys::signal::START_TS as u64),
+                end: (i + 1 == n).then_some(signal + sys::signal::END_TS as u64),
+            };
+            let dwords = build(
+                wait.take(),
+                &group,
+                self.max_copy,
+                stamps,
+                signal + sys::signal::VALUE as u64,
+            );
             match &mut self.way {
                 Way::Ring(r) => r.submit(&dwords)?,
                 Way::Cs(c) => c.submit(f, &dwords)?,
             }
             last = f;
+            if i + 1 == n && first != f {
+                self.spans.push_back((first, f));
+            }
+        }
+        // Spans whose first slot has been armed again tell nothing any more.
+        while self
+            .spans
+            .front()
+            .is_some_and(|&(first, _)| first + SLOTS <= self.signals.last)
+        {
+            self.spans.pop_front();
         }
         Ok(last)
+    }
+
+    /// Times fences `first..=last` (several [`copy`](Self::copy) calls) as
+    /// one: [`timestamps`](Self::timestamps) of `last` then starts at
+    /// `first`'s start.
+    pub fn join(&mut self, first: u64, last: u64) {
+        if first != last {
+            self.spans.retain(|&(_, l)| l != last);
+            self.spans.push_back((first, last));
+        }
+    }
+
+    /// Global timestamps (start, end) of the copy that fence `f` ends, once
+    /// it signalled and while the slots still hold them.
+    pub fn timestamps(&mut self, f: u64) -> Option<(u64, u64)> {
+        if !self.done(f) {
+            return None;
+        }
+        let first = self
+            .spans
+            .iter()
+            .find(|&&(_, last)| last == f)
+            .map_or(f, |&(first, _)| first);
+        if first + SLOTS <= self.signals.last {
+            return None;
+        }
+        let (a, _) = self.signals.raw_timestamps(first);
+        let (_, b) = self.signals.raw_timestamps(f);
+        (a != 0 && b >= a).then_some((a, b))
     }
 
     pub fn close(mut self, gpu: &Gpu) {
@@ -489,6 +617,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generations_map_to_their_sdma() {
+        assert_eq!(version(90012), Some(4));
+        assert_eq!(version(90402), Some(4));
+        assert_eq!(version(100_305), Some(5));
+        assert_eq!(version(110_501), Some(6));
+        assert_eq!(version(120_001), Some(7));
+        assert_eq!(version(80003), None);
+        assert_eq!(max_copy(5), 1 << 22);
+        assert!(max_copy(7) < 1 << 22 && max_copy(7).is_multiple_of(32));
+    }
+
+    #[test]
     fn packets_encode_as_the_engine_reads_them() {
         let c = packet::copy(0x1_2345_6000, 0xabcd_0000, 4096);
         assert_eq!(c, [0x1, 4095, 0, 0xabcd_0000, 0, 0x2345_6000, 0x1]);
@@ -496,6 +636,7 @@ mod tests {
         assert_eq!(w[0], 0x8 | (3 << 28) | (1 << 31));
         assert_eq!((w[1], w[2], w[3], w[4]), (8, 0x7f00, 0, u32::MAX));
         assert_eq!(w[5], 0x0fff_0010);
+        assert_eq!(packet::timestamp(0x1_0000_0028), [0xd | (2 << 8), 0x28, 1]);
         let a = packet::add64(0x10, -1);
         assert_eq!(a[0], 0xa | (47 << 25));
         assert_eq!((a[3], a[4]), (u32::MAX, u32::MAX));
@@ -508,7 +649,8 @@ mod tests {
             src: 0x8000_0000,
             bytes: 3 * packet::MAX_COPY + 5,
         };
-        let d = build(Some(0x40), &[big], 0x80);
+        let max = packet::MAX_COPY;
+        let d = build(Some(0x40), &[big], max, Stamps::default(), 0x80);
         // wait (6) + four copies (7 each) + signal (8).
         assert_eq!(d.len(), 6 + 4 * 7 + 8);
         assert_eq!(
@@ -517,19 +659,37 @@ mod tests {
             "the last copy is the remaining 5 bytes"
         );
         assert_eq!(d[6 + 3 * 7 + 5], 0x1000_0000 + 3 * (1 << 22));
+        // With timestamps around the copies.
+        let stamps = Stamps {
+            start: Some(0x100),
+            end: Some(0x108),
+        };
+        let t = build(None, &[big], max, stamps, 0x80);
+        assert_eq!(t.len(), 3 + 4 * 7 + 3 + 8);
+        assert_eq!((t[0] & 0xff, t[3] & 0xff, t[31] & 0xff), (13, 1, 13));
+        assert_eq!(t[32], 0x108);
         // A copy too large for one submission becomes several.
         let huge = Copy {
             bytes: (COPIES_PER_SUBMIT as u64 + 1) * packet::MAX_COPY,
             ..big
         };
-        let g = groups(&[huge]);
+        let g = groups(&[huge], max);
         assert_eq!(g.len(), 2);
         assert_eq!(g[1][0].bytes, packet::MAX_COPY);
         assert_eq!(
             g[1][0].dst,
             big.dst + COPIES_PER_SUBMIT as u64 * packet::MAX_COPY
         );
-        assert!(build(None, &g[0], 0).len() <= SUBMIT_DWORDS);
-        assert_eq!(groups(&[]), Vec::<Vec<Copy>>::new());
+        let both = Stamps {
+            start: Some(0),
+            end: Some(8),
+        };
+        assert!(build(Some(0), &g[0], max, both, 0).len() <= SUBMIT_DWORDS);
+        assert_eq!(groups(&[], max), Vec::<Vec<Copy>>::new());
+        // SDMA 7's smaller copies split differently.
+        let seven = groups(&[huge], max_copy(7));
+        assert_eq!(seven.len(), 2);
+        let packets: u64 = seven[0].iter().map(|c| c.bytes.div_ceil(max_copy(7))).sum();
+        assert!(packets <= COPIES_PER_SUBMIT as u64);
     }
 }

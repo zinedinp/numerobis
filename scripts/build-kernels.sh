@@ -17,9 +17,16 @@ CLANG=${CLANG:-clang}
 PTXAS=${PTXAS:-ptxas}
 GLSLC=${GLSLC:-glslc}
 
-# gfx10-3-generic: one code object for all of RDNA 2 (gfx1030..gfx1036, incl.
-# the Rembrandt / Van Gogh / Raphael APUs), loaded by the raw `amd` backend.
-AMD_ARCHS=(gfx908 gfx90a gfx942 gfx950 gfx10-3-generic gfx1100 gfx1200)
+# The specific targets, and one generic code object per family for the rest
+# of it (loaded by the raw `amd` backend):
+#   gfx9-generic     Vega (gfx900..gfx90c, incl. the Raven / Renoir APUs)
+#   gfx9-4-generic   CDNA 3 (gfx940, gfx941)
+#   gfx10-1-generic  RDNA 1 (gfx1010..gfx1013)
+#   gfx10-3-generic  RDNA 2 (gfx1030..gfx1036, incl. Rembrandt / Van Gogh / Raphael)
+#   gfx11-generic    RDNA 3 and 3.5 (gfx1101..gfx1103, gfx1150..gfx1153)
+#   gfx12-generic    RDNA 4 (gfx1201)
+AMD_ARCHS=(gfx908 gfx90a gfx942 gfx950 gfx1100 gfx1200
+    gfx9-generic gfx9-4-generic gfx10-1-generic gfx10-3-generic gfx11-generic gfx12-generic)
 NV_ARCHS=(sm_80 sm_89 sm_90 sm_100 sm_120)
 
 check=0
