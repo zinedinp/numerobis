@@ -52,7 +52,7 @@ fn amd_hsaco() {
     // HSACO kernels are found through their kernel descriptor `<name>.kd`.
     assert_eq!(
         check("amd", "hsaco", machine::AMDGPU, |s| format!("{s}.kd")),
-        6
+        7
     );
 }
 

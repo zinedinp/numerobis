@@ -13,6 +13,12 @@ fn main() {
             println!("nvidia: {e}");
         }
     }
+    #[cfg(feature = "amd")]
+    for r in numerobis::amd::backend::probe() {
+        if let Err(e) = r {
+            println!("amd: {e}");
+        }
+    }
     #[cfg(feature = "tt")]
     for r in numerobis::tt::backend::probe() {
         if let Err(e) = r {

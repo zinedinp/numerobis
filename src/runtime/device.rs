@@ -12,8 +12,11 @@ use crate::runtime::stream::Stream;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Placement {
     /// Highest matrix tier; GPUs and accelerator cards before NPUs.
+    /// Devices without a matrix engine (whose vector units run the Emulated
+    /// tier, such as RDNA 2) only when no device has one.
     Fastest,
-    /// NPUs before GPUs: moves GEMM batches off CPU and iGPU.
+    /// NPUs before GPUs: moves GEMM batches off CPU and iGPU. Devices
+    /// without a matrix engine last, as for [`Fastest`](Self::Fastest).
     LowPower,
     /// The `n`-th device of [`Device::all`].
     Device(usize),
@@ -57,7 +60,7 @@ impl Device {
 
     /// Every device the compiled-in backends can open.
     ///
-    /// Every raw backend of the enabled features (`nvidia`, `tt`). Devices
+    /// Every raw backend of the enabled features (`nvidia`, `amd`, `tt`). Devices
     /// that fail to open are skipped.
     #[must_use]
     pub fn all() -> Vec<Device> {
@@ -65,6 +68,8 @@ impl Device {
         let mut v = Vec::new();
         #[cfg(all(feature = "nvidia", target_os = "linux"))]
         v.extend(crate::nvidia::backend::open_all());
+        #[cfg(all(feature = "amd", target_os = "linux"))]
+        v.extend(crate::amd::backend::open_all());
         #[cfg(all(feature = "tt", target_os = "linux"))]
         v.extend(crate::tt::backend::open_all());
         v
@@ -112,7 +117,6 @@ impl Placement {
     /// Picks from `devices` (only those with a matrix engine).
     #[must_use]
     pub fn pick(self, devices: &[Device]) -> Option<Device> {
-        let matrix = |d: &&Device| d.features().access(Engine::Matrix).is_some();
         match self {
             Placement::Device(n) => devices.get(n).cloned(),
             Placement::Fastest | Placement::LowPower => {
@@ -122,15 +126,11 @@ impl Placement {
                         (Placement::LowPower, _) | (_, DeviceClass::Npu) => 1,
                         _ => 2,
                     };
-                    (class, d.features().tiers.len())
+                    let matrix = d.features().access(Engine::Matrix).is_some();
+                    (matrix, class, d.features().tiers.len())
                 };
                 // max_by_key keeps the last max; reverse so the first device wins ties.
-                devices
-                    .iter()
-                    .filter(matrix)
-                    .rev()
-                    .max_by_key(|d| rank(d))
-                    .cloned()
+                devices.iter().rev().max_by_key(|d| rank(d)).cloned()
             }
         }
     }

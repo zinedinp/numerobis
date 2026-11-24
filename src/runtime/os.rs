@@ -159,7 +159,10 @@ impl Map {
         fd: i32,
         off: u64,
     ) -> Result<Map> {
-        let off = libc::off_t::try_from(off).map_err(|_| Error::Os(libc::EINVAL))?;
+        // The kernel takes the offset as unsigned: drivers put the mapping
+        // type in its top bits (KFD's doorbells at `3 << 62`).
+        #[allow(clippy::cast_possible_wrap, reason = "passed on bit for bit")]
+        let off = off as libc::off_t;
         // SAFETY: plain mmap; MAP_FIXED callers own the target range.
         let p = unsafe { libc::mmap(addr as *mut _, len, prot, flags, fd, off) };
         if p == libc::MAP_FAILED {

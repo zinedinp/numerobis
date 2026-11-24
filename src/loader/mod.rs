@@ -2,3 +2,4 @@
 //! backends turn the parsed image into a loaded kernel.
 
 pub mod elf;
+pub mod msgpack;

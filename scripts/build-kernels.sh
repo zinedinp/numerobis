@@ -17,7 +17,9 @@ CLANG=${CLANG:-clang}
 PTXAS=${PTXAS:-ptxas}
 GLSLC=${GLSLC:-glslc}
 
-AMD_ARCHS=(gfx908 gfx90a gfx942 gfx950 gfx1100 gfx1200)
+# gfx10-3-generic: one code object for all of RDNA 2 (gfx1030..gfx1036, incl.
+# the Rembrandt / Van Gogh / Raphael APUs), loaded by the raw `amd` backend.
+AMD_ARCHS=(gfx908 gfx90a gfx942 gfx950 gfx10-3-generic gfx1100 gfx1200)
 NV_ARCHS=(sm_80 sm_89 sm_90 sm_100 sm_120)
 
 check=0
@@ -34,6 +36,17 @@ common=(-cl-std=CL2.0 -O3 -nogpulib -ffp-contract=off -cl-fp32-correctly-rounded
     -I "$root/kernels/include" -Wall -Werror -Wno-unused-function)
 
 mkdir -p "$out/amd" "$out/nvidia" "$out/spirv" "$out/tt"
+
+# clang links amdgcn with ld.lld; without it the rust-lld of the Rust
+# toolchain does the same when it is called by that name.
+if ! command -v ld.lld >/dev/null; then
+    rust_lld=$(ls "$HOME"/.rustup/toolchains/*/lib/rustlib/*/bin/rust-lld 2>/dev/null | head -1 || true)
+    if [[ -n $rust_lld ]]; then
+        lld_dir=$(mktemp -d)
+        ln -s "$rust_lld" "$lld_dir/ld.lld"
+        export PATH="$lld_dir:$PATH"
+    fi
+fi
 
 for a in "${AMD_ARCHS[@]}"; do
     "$CLANG" "${common[@]}" -target amdgcn-amd-amdhsa -mcpu="$a" "$src" -o "$out/amd/$a-emulated.hsaco"

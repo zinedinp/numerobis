@@ -20,7 +20,7 @@ and out are `Stream::upload` / `upload_packed` and `Stream::download`.
 | NVIDIA | `nvidia` | raw: RM + UVM ioctls, GPFIFO, QMD | Ampere (sm_80/86), Ada (sm_89) | Emulated | **working**, bit-exact on RTX 3080 |
 | Tenstorrent | `tt` | raw: tt-kmd, TLB windows, NoC | Blackhole | Emulated (one Tensix core, soft-float) | implemented; kernel code verified under qemu, on-card validation pending |
 | Intel GPU | `intel` | raw: `xe` | Xe-LP ... Xe2 | - | planned |
-| AMD GPU | `amd` | raw: KFD | gfx908 ... gfx12 | - | planned (HSACO kernels already built) |
+| AMD GPU | `amd` | raw: KFD, AQL queue, doorbell, signals | RDNA 2 (gfx10.3, `gfx10-3-generic`); gfx1100, gfx1200, gfx908 ... gfx950 built | Emulated | **working**, bit-exact on Radeon 680M (gfx1035); other targets load-checked only |
 | NPUs | `accel`, `xdna` | raw: `accel` subsystem | Intel NPU, AMD XDNA, RK3588, Ethos-U | - | planned |
 | Raspberry Pi | `v3d` | raw: `v3d` | Pi 4/5 | - | planned |
 | Vulkan, CUDA, HIP | `vulkan`, `cuda`, `hip` | comfort (vendor or portable user space) | any | - | planned (the Vulkan feature waterfall for graphics hosts is done, see below) |
@@ -34,17 +34,18 @@ tiers (tensor cores, XMX, MFMA, Tensix FPU) are added per vendor on top of it;
 
 ```toml
 [dependencies]
-numerobis = { version = "0.4.0-beta", features = ["nvidia", "tt"] }
+numerobis = { version = "0.4.0-beta", features = ["nvidia", "amd", "tt"] }
 ```
 
 | Feature | Enables |
 |---|---|
 | `nvidia` | raw NVIDIA backend (Linux, open kernel modules) |
+| `amd` | raw AMD backend (Linux, `amdgpu` with KFD, Linux 6.6 or later) |
 | `tt` | raw Tenstorrent backend (Linux, tt-kmd 2.x) |
 | `mock` | host reference backend (`Device::mock()`), for tests |
 | `vulkan` | `numerobis::vulkan`: the Vulkan capability waterfall (and later the comfort compute backend) |
 | `directx` | `numerobis::directx`: Direct3D 8 to 12 capabilities, legacy and modern apart |
-| `intel`, `amd`, `xdna`, `v3d`, `accel`, `cuda`, `hip` | reserved, no code yet |
+| `intel`, `xdna`, `v3d`, `accel`, `cuda`, `hip` | reserved, no code yet |
 
 `vulkan` and `directx` build without each other; a host takes the one it
 needs. With both, `directx::vulkan` converts between them.
@@ -447,6 +448,7 @@ capability that is untested on its OS with `(untested on Linux)`.
 | Part | Linux | Windows |
 |---|---|---|
 | raw NVIDIA backend | tested (RTX 3080) | unavailable |
+| raw AMD backend (KFD) | tested (Radeon 680M, gfx1035, Linux 7.3): every Emulated kernel bit-exact, timing, dma-buf export/import | unavailable |
 | raw Tenstorrent backend | kernel code under qemu, on-card pending | unavailable |
 | `dmabuf`, `sync` | tested on amdgpu (Radeon 680M): timeline syncobjs, PRIME export/import of a real buffer; `/dev/udmabuf` needs the `kvm` group, else the memfd fallback | unavailable |
 | `pci` tables, `vulkan` tables and waterfall, `directx` tables | unit-tested | unit-tested |
@@ -535,14 +537,28 @@ native matrix tiers will get per-tier tolerances.
     headers the struct layouts were checked against are opened (`620.70.06`).
     `NUMEROBIS_NV_ANY_DRIVER=1` tries others at your own risk.
   - Tenstorrent: `/dev/tenstorrent/N` (tt-kmd 2.x, card firmware running).
+  - AMD: `/dev/kfd` and the GPU's render node `/dev/dri/renderD*` (group
+    `render`), `amdgpu` with KFD 1.14 or later (Linux 6.6). No ROCm user space.
 - Building the kernels (only when changing them, binaries are checked in):
-  clang with amdgcn/nvptx/spirv64/riscv32 targets and lld, `ptxas`, `glslc`
+  clang with amdgcn/nvptx/spirv64/riscv32 targets and lld (for amdgcn the
+  `rust-lld` of the Rust toolchain stands in), `ptxas`, `glslc`
   (Vulkan SDK) for `kernels/vulkan`, optionally `spirv-val`. `scripts/build-kernels.sh` builds,
   `scripts/build-kernels.sh --check` verifies `kernels/bin` is up to date.
 - Regenerating the Vulkan tables (only when adding structs or versions):
   Python 3, rustfmt and a `vk.xml` ([see above](#regenerating-the-tables)).
 - Regenerating the DirectX tables: Python 3, rustfmt and the Windows SDK
   headers (`um/` and `shared/` of `Include/<version>`).
+
+### AMD notes
+
+- One AQL compute queue per GPU and process; buffers sit in CPU-visible
+  device memory at the same address for CPU and GPU (system memory when that
+  is full), so uploads and downloads are CPU copies after the queue drained.
+- `NUMEROBIS_AMD_TRACE=1` prints every KFD call that fails, and the queue's
+  state when a wait times out.
+- Found on the 680M: the CP fetches no packet unless the ring is in
+  executable memory and the context save area is zeroed; KFD binds a
+  process's GPU VM to the first render-node file and refuses any other.
 
 ### Tenstorrent notes
 
@@ -558,7 +574,7 @@ native matrix tiers will get per-tier tolerances.
 
 ```sh
 cargo test                                # mock + kernels compiled for the host
-cargo test --features nvidia,tt           # adds every device that opens
+cargo test --features nvidia,amd,tt       # adds every device that opens
 cargo test --features tt --test tt_memory -- --nocapture   # card GDDR6 and L1 check
 ```
 
@@ -587,7 +603,7 @@ cargo run --example xess_probe --features directx              # XeSS 2 from the
 
 Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
 `reason`. The Linux-only code is checked from any host with
-`cargo clippy --target x86_64-unknown-linux-gnu --features nvidia,tt --all-targets`.
+`cargo clippy --target x86_64-unknown-linux-gnu --features nvidia,amd,tt --all-targets`.
 
 ## Planned
 
@@ -596,8 +612,10 @@ Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
   backend first.
 - **Tenstorrent:** spread work over all Tensix tiles, then the FPU matrix tier
   with native BFP8/4/2 and BF16; Wormhole.
-- **Intel** (`xe`: COMPUTE_WALKER, XMX/DPAS), **AMD** (KFD: AQL queues,
-  MFMA/WMMA), **NPUs** (Intel NPU, AMD XDNA, RK3588, Ethos-U) with dma-buf
+- **AMD:** the MFMA / WMMA tiers (`nb_amd.h`) on CDNA and RDNA 3/4, an SDMA
+  queue for copies (today the CPU copies through the shared mapping), and
+  runs on more than the 680M.
+- **Intel** (`xe`: COMPUTE_WALKER, XMX/DPAS), **NPUs** (Intel NPU, AMD XDNA, RK3588, Ethos-U) with dma-buf
   sharing between iGPU and NPU, **Raspberry Pi** (`v3d` QPU code generation).
 - **Comfort `vulkan`** backend as the universal fallback: the cooperative
   matrix GEMM runs (`matrix_probe`); next is a `Backend` around it, with
