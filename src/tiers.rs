@@ -26,6 +26,13 @@ pub enum Tier {
 }
 
 impl Tier {
+    /// The matrix engine this tier's kernels run on ([`crate::matrix`]);
+    /// `None` for [`Tier::Emulated`] and tiers without one.
+    #[must_use]
+    pub const fn matrix(self) -> Option<crate::matrix::Engine> {
+        crate::matrix::Engine::of(self)
+    }
+
     /// Short name used in kernel binary paths (`kernels/bin/<vendor>/<tier>/...`).
     #[must_use]
     pub fn name(self) -> String {

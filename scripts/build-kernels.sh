@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Builds the Emulated kernels (kernels/src/all.cl) for every target.
-# Output is checked in under kernels/bin, so no toolchain is
-# needed at run time.
+# Builds the Emulated kernels (kernels/src/all.cl) for every target, and the
+# cooperative matrix GEMMs (kernels/vulkan). Output is checked in under
+# kernels/bin, so no toolchain is needed at run time.
 #
 #   scripts/build-kernels.sh           build into kernels/bin
 #   scripts/build-kernels.sh --check   rebuild into a temp dir, fail if kernels/bin differs
 #
-# Needs: clang (amdgcn, nvptx, spirv64, riscv32 targets) and lld, ptxas for cubins, spirv-val
-# (optional). Intel Gen ISA via ocloc is added once ocloc is available; until
-# then Intel loads the SPIR-V. Environment: CLANG, PTXAS.
+# Needs: clang (amdgcn, nvptx, spirv64, riscv32 targets) and lld, ptxas for
+# cubins, glslc (Vulkan SDK) for kernels/vulkan, spirv-val (optional). Intel
+# Gen ISA via ocloc is added once ocloc is available; until then Intel loads
+# the SPIR-V. Environment: CLANG, PTXAS, GLSLC.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 CLANG=${CLANG:-clang}
 PTXAS=${PTXAS:-ptxas}
+GLSLC=${GLSLC:-glslc}
 
 AMD_ARCHS=(gfx908 gfx90a gfx942 gfx950 gfx1100 gfx1200)
 NV_ARCHS=(sm_80 sm_89 sm_90 sm_100 sm_120)
@@ -52,6 +54,24 @@ fi
 
 "$CLANG" "${common[@]}" -target spirv64 -c "$src" -o "$out/spirv/emulated.spv"
 
+# Matrix engines through Vulkan cooperative matrices (kernels/vulkan): one
+# SPIR-V per input / accumulator type, as examples/matrix_probe runs them.
+if command -v "$GLSLC" >/dev/null; then
+    #        name  acc  A_T        C_T        S_T
+    while read -r a acc at ct st; do
+        "$GLSLC" --target-env=vulkan1.3 -fshader-stage=compute -O \
+            -DA_T="$at" -DC_T="$ct" -DS_T="$st" "$root/kernels/vulkan/gemm_coopmat.comp" \
+            -o "$out/spirv/gemm_coopmat_${a}_${a}_${acc}.spv"
+    done <<'TYPES'
+f16 f32 float16_t float float
+f16 f16 float16_t float16_t float
+i8 i32 int8_t int32_t int
+u8 i32 uint8_t uint32_t int
+TYPES
+else
+    echo "warning: $GLSLC not found, skipping the cooperative matrix kernels" >&2
+fi
+
 # Tenstorrent: the same sources as freestanding C for the Tensix BRISC core
 # (RV32IM, no FPU: kernels/tt/softfloat.c), linked at L1 address 0 with the
 # mailbox runtime (kernels/tt/runtime.c).
@@ -61,6 +81,9 @@ fi
     -o "$out/tt/blackhole-emulated.elf" "$root/kernels/tt/runtime.c" "$root/kernels/tt/softfloat.c"
 if command -v spirv-val >/dev/null; then
     spirv-val --target-env spv1.4 "$out/spirv/emulated.spv"
+    for f in "$out"/spirv/gemm_coopmat_*.spv; do
+        [[ -e $f ]] && spirv-val --target-env vulkan1.3 "$f"
+    done
 fi
 
 if ((check)); then

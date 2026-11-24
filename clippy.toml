@@ -1,5 +1,5 @@
 # Terms the docs use as words, not code (".." keeps clippy's own list).
 doc-valid-idents = [
     "PCIe", "DirectX", "DirectDraw", "DirectStorage", "DirectSR", "NVMe", "GDeflate",
-    "XeSS", "DXCore", "WARP", "Direct3D", "..",
+    "XeSS", "DXCore", "WARP", "Direct3D", "GeForce", "XeFX", "XeLL", "XeFG", "DP4a", "..",
 ]

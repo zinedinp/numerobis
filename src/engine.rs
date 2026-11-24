@@ -6,7 +6,8 @@ use crate::tiers::Tier;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Engine {
-    /// Matrix engines: XMX, Tensor Cores, MFMA/WMMA, Tensix FPU, AIE, NPUs.
+    /// Matrix engines: XMX, Tensor Cores, MFMA/WMMA, Tensix FPU, AIE, NPUs
+    /// (the GPU and Tensix ones described in [`crate::matrix`]).
     Matrix,
     /// SIMT/SIMD vector units (stage 2).
     Vector,
@@ -78,5 +79,11 @@ impl FeatureSet {
     #[must_use]
     pub fn has_tier(&self, tier: Tier) -> bool {
         self.tiers.contains(&tier)
+    }
+
+    /// The matrix engines behind [`tiers`](Self::tiers), best last.
+    #[must_use]
+    pub fn matrix(&self) -> Vec<crate::matrix::Engine> {
+        crate::matrix::engines(&self.tiers)
     }
 }

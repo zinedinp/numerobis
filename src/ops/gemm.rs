@@ -44,6 +44,10 @@ impl GemmShape {
 /// Integer inputs need an `I32` accumulator (`alpha`/`beta` are `i32`, the
 /// arithmetic wraps). Floating inputs use `F32` or `F16` accumulators.
 ///
+/// Which matrix instruction takes these formats on each engine (XMX, Tensor
+/// Cores, Matrix Cores, Tensix), natively or after an exact widening:
+/// [`matrix::Engine::route`](crate::matrix::Engine::route).
+///
 /// # Errors
 ///
 /// [`Error::InvalidArgument`](crate::Error::InvalidArgument) for `batch` 0, buffer lengths that

@@ -12,6 +12,7 @@
 //! |---|---|
 //! | [`elem`] | element types, split into `float`, `int`, `block` |
 //! | [`ops`] | the API, one module per calculation kind (`convert`, `quantize`, `int`, `gemm`, `reduce`, `act`, `conv`, `resize`) |
+//! | [`matrix`] | the matrix engines in one model: Intel XMX, NVIDIA Tensor Cores, AMD Matrix Cores / AI Accelerators, Tenstorrent Tensix; their instructions and how a GEMM reaches one |
 #![cfg_attr(
     target_os = "linux",
     doc = "| [`dmabuf`] | `HostDmabuf`, PRIME helpers: zero-copy sharing with Vulkan/KMS/V4L2 |",
@@ -75,6 +76,7 @@ pub mod auto_up;
 pub mod directx;
 pub mod engine;
 pub mod loader;
+pub mod matrix;
 #[cfg(feature = "mock")]
 pub mod mock;
 pub mod ops;

@@ -1,6 +1,6 @@
-//! Which GPU a pair of PCI ids names, on every OS and before any backend
-//! opens the device: the ids are what Vulkan (`vendorID`, `deviceID`), DXGI
-//! and sysfs all report. For a graphics host that picks vendor paths at run
+//! Which GPU or accelerator card a pair of PCI ids names, on every OS and
+//! before any backend opens the device: the ids are what Vulkan
+//! (`vendorID`, `deviceID`), DXGI, sysfs and tt-kmd all report. For a graphics host that picks vendor paths at run
 //! time, as miraculix's feature sets do for CPUs.
 //!
 //! The architecture tables hold the ids known to this crate; an id outside
@@ -20,6 +20,7 @@ pub mod vendor_id {
     pub const QUALCOMM: u32 = 0x5143;
     pub const IMGTEC: u32 = 0x1010;
     pub const APPLE: u32 = 0x106B;
+    pub const TENSTORRENT: u32 = 0x1E52;
     /// Software rasterisers (WARP, the D3D12 mapping layer's own ids).
     pub const MICROSOFT: u32 = 0x1414;
     /// Mesa's software drivers (llvmpipe, lavapipe) report this.
@@ -36,6 +37,7 @@ pub enum Vendor {
     Qualcomm,
     ImgTec,
     Apple,
+    Tenstorrent,
     Microsoft,
     Mesa,
     Other(u32),
@@ -52,6 +54,7 @@ impl Vendor {
             vendor_id::QUALCOMM => Self::Qualcomm,
             vendor_id::IMGTEC => Self::ImgTec,
             vendor_id::APPLE => Self::Apple,
+            vendor_id::TENSTORRENT => Self::Tenstorrent,
             vendor_id::MICROSOFT => Self::Microsoft,
             vendor_id::MESA => Self::Mesa,
             other => Self::Other(other),
@@ -69,6 +72,7 @@ impl Vendor {
             Self::Qualcomm => vendor_id::QUALCOMM,
             Self::ImgTec => vendor_id::IMGTEC,
             Self::Apple => vendor_id::APPLE,
+            Self::Tenstorrent => vendor_id::TENSTORRENT,
             Self::Microsoft => vendor_id::MICROSOFT,
             Self::Mesa => vendor_id::MESA,
             Self::Other(id) => id,
@@ -87,6 +91,7 @@ impl Vendor {
             Self::Qualcomm => "Qualcomm",
             Self::ImgTec => "ImgTec",
             Self::Apple => "Apple",
+            Self::Tenstorrent => "Tenstorrent",
             Self::Microsoft => "Microsoft",
             Self::Mesa => "Mesa",
             Self::Other(_) => return None,
@@ -107,6 +112,8 @@ pub enum IntelArch {
     XeLpg,
     /// Xe-HPG: Arc A-series (Alchemist, DG2).
     XeHpg,
+    /// Xe-HPC: Data Center GPU Max (Ponte Vecchio).
+    XeHpc,
     /// Xe2-LPG: Lunar Lake.
     Xe2Lpg,
     /// Xe2-HPG: Arc B-series (Battlemage).
@@ -141,12 +148,22 @@ pub enum AmdArch {
     Cdna,
 }
 
-/// A GPU's architecture, as far as the tables know it.
+/// Tenstorrent cards (tt-kmd's `/dev/tenstorrent/N`), shared with the raw
+/// [`tt`](crate::tt) backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TtArch {
+    Grayskull,
+    Wormhole,
+    Blackhole,
+}
+
+/// A GPU's or card's architecture, as far as the tables know it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Architecture {
     Intel(IntelArch),
     Nvidia(NvidiaArch),
     Amd(AmdArch),
+    Tenstorrent(TtArch),
     Unknown,
 }
 
@@ -167,6 +184,10 @@ impl Architecture {
                 Some(arch) => Self::Amd(arch),
                 None => Self::Unknown,
             },
+            Vendor::Tenstorrent => match tenstorrent(device) {
+                Some(arch) => Self::Tenstorrent(arch),
+                None => Self::Unknown,
+            },
             _ => Self::Unknown,
         }
     }
@@ -181,6 +202,7 @@ impl Architecture {
                 IntelArch::XeLp => "Xe-LP",
                 IntelArch::XeLpg => "Xe-LPG",
                 IntelArch::XeHpg => "Xe-HPG",
+                IntelArch::XeHpc => "Xe-HPC",
                 IntelArch::Xe2Lpg => "Xe2-LPG",
                 IntelArch::Xe2Hpg => "Xe2-HPG",
             },
@@ -203,6 +225,11 @@ impl Architecture {
                 AmdArch::Rdna4 => "RDNA 4",
                 AmdArch::Cdna => "CDNA",
             },
+            Self::Tenstorrent(arch) => match arch {
+                TtArch::Grayskull => "Grayskull",
+                TtArch::Wormhole => "Wormhole",
+                TtArch::Blackhole => "Blackhole",
+            },
             Self::Unknown => return None,
         })
     }
@@ -220,6 +247,7 @@ const fn intel(device: u32) -> Option<IntelArch> {
         }
         0x7D00..=0x7DFF => IntelArch::XeLpg,
         0x5690..=0x56CF => IntelArch::XeHpg,
+        0x0BD0..=0x0BDB => IntelArch::XeHpc,
         0x6420 | 0x64A0 | 0x64B0 => IntelArch::Xe2Lpg,
         0xE200..=0xE21F => IntelArch::Xe2Hpg,
         _ => return None,
@@ -267,7 +295,17 @@ const fn amd(device: u32) -> Option<AmdArch> {
     })
 }
 
-/// A GPU known by its PCI ids.
+/// Tenstorrent device ids.
+const fn tenstorrent(device: u32) -> Option<TtArch> {
+    Some(match device {
+        0xFACA => TtArch::Grayskull,
+        0x401E => TtArch::Wormhole,
+        0xB140 => TtArch::Blackhole,
+        _ => return None,
+    })
+}
+
+/// A GPU or card known by its PCI ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Gpu {
     pub vendor: Vendor,
@@ -444,6 +482,15 @@ mod tests {
         assert_eq!(arch(0x1002, 0x744C), Architecture::Amd(AmdArch::Rdna3)); // RX 7900 XTX
         assert_eq!(arch(0x1002, 0x73BF), Architecture::Amd(AmdArch::Rdna2)); // RX 6800 XT
         assert_eq!(arch(0x1002, 0x7550), Architecture::Amd(AmdArch::Rdna4)); // RX 9070 XT
+        assert_eq!(arch(0x8086, 0x0BD5), Architecture::Intel(IntelArch::XeHpc)); // Max 1550
+        assert_eq!(
+            arch(0x1E52, 0xB140),
+            Architecture::Tenstorrent(TtArch::Blackhole)
+        ); // p150a
+        assert_eq!(
+            arch(0x1E52, 0x401E),
+            Architecture::Tenstorrent(TtArch::Wormhole)
+        ); // n300
     }
 
     #[test]

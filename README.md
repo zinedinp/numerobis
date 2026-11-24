@@ -27,7 +27,8 @@ and out are `Stream::upload` / `upload_packed` and `Stream::download`.
 
 "Emulated" is the portable tier: formats are decoded with integer bit logic and
 the math runs in F32 with explicit FMA. It runs on every target. Native matrix
-tiers (tensor cores, XMX, MFMA, Tensix FPU) are added per vendor on top of it.
+tiers (tensor cores, XMX, MFMA, Tensix FPU) are added per vendor on top of it;
+`numerobis::matrix` describes those engines in one model.
 
 ## Cargo features
 
@@ -104,6 +105,73 @@ Every op takes a `Choice`:
   and these formats (falls back to `Emulated`).
 - `Choice::Down(tier)`: exactly that tier, or `Error::Unsupported`. Useful to
   compare tiers against each other.
+
+## Matrix engines (`numerobis::matrix`)
+
+Every vendor's matrix unit does the same thing, `D = A·B + C` on small tiles
+with narrow inputs and a wide accumulator; `numerobis::matrix` describes
+them in one model, apart from the vector-unit ops:
+
+| Engine | Vendor name | Generations | Issued by |
+|---|---|---|---|
+| `Engine::Xmx` | Intel XMX (`dpas`) | Xe-HPG, Xe-HPC, Xe2 | a subgroup of 8 or 16 |
+| `Engine::TensorCore` | NVIDIA Tensor Cores | Volta, Turing, Ampere, Ada (`mma.sync`), Hopper (`wgmma`), Blackwell (`tcgen05`), GeForce Blackwell (`mma.sync` with FP4/FP6, MX, NVFP4) | a warp, a warpgroup, a thread block (pair) |
+| `Engine::MatrixCore` | AMD Matrix Cores (CDNA, `MFMA`) and AI Accelerators (RDNA, `WMMA`) | CDNA 1 to 4, RDNA 3 and 4 | a wave of 64 or 32 |
+| `Engine::Tensix` | Tenstorrent Tensix FPU | Wormhole, Blackhole | one Tensix core (32x32 tiles, `BFP8/4/2_b`) |
+
+Each generation lists its instructions as `Mma`s (A, B, accumulator
+format, `M×N×K` shape, scope, the vendor's mnemonic). `Engine::from_gpu`
+finds the engine from the PCI ids (Tenstorrent included; Turing's GTX 16
+chips, RDNA 2 and Xe-LP have none), `Tier::matrix` from a vendor tier.
+`Engine::route` says how a `gemm_<a>_<b>_<acc>` reaches it: natively, after
+an exact widening (`E4M3` to `F16`, `I4` to `I8`, unit-tested over every
+code), or not at all (the vector units).
+
+```rust
+use numerobis::elem::{E4M3Fn, Elem, F32};
+use numerobis::matrix::{Engine, Route};
+use numerobis::pci::Gpu;
+
+let engine = Engine::from_gpu(Gpu::from_pci(0x8086, 0xE20B)).unwrap(); // "Xe2 XMX"
+match engine.route(E4M3Fn::FORMAT, E4M3Fn::FORMAT, F32::FORMAT) {
+    Route::Native(mma) => println!("{mma}"),
+    Route::Widened { a, b, mma, .. } => println!("as {} x {}: {mma}", a.name(), b.name()),
+    Route::Vector => println!("vector units"),
+}
+```
+
+`matrix::vulkan` (feature `vulkan`) reads `VK_KHR_cooperative_matrix`'s list
+into the same model and compares it with the table: on the Arc B580 the
+driver reports `f16 x f16 -> f32 | f16` (8x16x16) and `s8 x s8`, `u8 x u8 ->
+32-bit` (8x16x32), each exactly one Xe2 `dpas`; bf16, int4 and mixed
+signedness are in the hardware but not exposed.
+
+`cargo run --release --example matrix_probe --features vulkan` runs that
+comparison and then a GEMM on the matrix engine for every reported type
+(`kernels/vulkan/gemm_coopmat.comp`, numerobis's layout and `alpha`/`beta`),
+compared bit for bit with the mock backend's `ops::gemm`, and a timed
+4096³ GEMM. On the B580: all four bit-identical, about 20 TFLOPS (f16) and
+22 TOPS (i8) from this simple kernel (no shared memory tiling), 0
+validation errors.
+
+### XeSS (`numerobis::intel::xess`)
+
+Intel's AI upscaler, whose network runs on XMX on Intel GPUs that have it
+and on DP4a elsewhere (`xess::Path::of`, from the matrix engine). The
+module has the SDK's structs and result codes, the quality presets with
+their factors (current and legacy) and the input resolution XeSS asks for
+(`input_resolution`: rounded up, as XeSS does). The Intel driver carries
+XeSS 2 itself (`igxess2.dll`, `igxess_fg.dll`, `igxell.dll` next to its
+user-mode driver).
+
+`cargo run --example xess_probe --features directx` finds those through
+D3DKMT, creates a D3D12 device and a XeSS context, and checks every input
+resolution and the legacy factors against the module, then runs
+`xessD3D12Init`. On the B580: XeSS-SR 2.0.2, XeSS-FG 1.3.3, XeLL 1.3.2, all
+21 resolutions as computed, init in 3.9 s the first time (the network's
+pipelines) and under 60 ms after. `NUMEROBIS_XESS_DLL` takes a game's
+`libxess.dll` instead; 3DMark's 1.3.1 hands the work to the driver's
+`igxess2.dll`.
 
 ## Vulkan feature waterfall (`numerobis::vulkan`)
 
@@ -393,6 +461,8 @@ capability that is untested on its OS with `(untested on Linux)`.
 | 32-bit x86 (`i686-pc-windows-msvc`) | untested | tested: lib tests, `vulkan_probe`, `directx_probe` (needs miraculix 0.6.5) |
 | `examples/vulkan_probe` loader | untested (`libvulkan.so.1`) | tested (`vulkan-1.dll`) |
 | `examples/directx_probe` | unavailable (a Windows program; under Wine untested) | tested |
+| `matrix` tables | unit-tested | Xe2 tested through Vulkan cooperative matrices (`matrix_probe`: the four reported types bit-exact); other engines untested |
+| `intel::xess`, `examples/xess_probe` | unavailable (XeSS is Windows only) | tested (B580, driver 101.9175) |
 
 `Capability::spec().support` has the per-capability flag; on Windows the
 capabilities the B580 doesn't have (bfloat16, float8, shader objects, ASTC,
@@ -463,8 +533,8 @@ native matrix tiers will get per-tier tolerances.
     `NUMEROBIS_NV_ANY_DRIVER=1` tries others at your own risk.
   - Tenstorrent: `/dev/tenstorrent/N` (tt-kmd 2.x, card firmware running).
 - Building the kernels (only when changing them, binaries are checked in):
-  clang with amdgcn/nvptx/spirv64/riscv32 targets and lld, `ptxas`,
-  optionally `spirv-val`. `scripts/build-kernels.sh` builds,
+  clang with amdgcn/nvptx/spirv64/riscv32 targets and lld, `ptxas`, `glslc`
+  (Vulkan SDK) for `kernels/vulkan`, optionally `spirv-val`. `scripts/build-kernels.sh` builds,
   `scripts/build-kernels.sh --check` verifies `kernels/bin` is up to date.
 - Regenerating the Vulkan tables (only when adding structs or versions):
   Python 3, rustfmt and a `vk.xml` ([see above](#regenerating-the-tables)).
@@ -508,6 +578,8 @@ backend feature:
 cargo run --example vulkan_probe    # every capability, vkCreateDevice under validation
 NUMEROBIS_VK_API=1.0 cargo run --example vulkan_probe   # the extension routes instead
 cargo run --example bars            # PCIe link, BAR aperture, resizable BAR
+cargo run --release --example matrix_probe --features vulkan   # GEMMs on XMX / Tensor Cores / WMMA
+cargo run --example xess_probe --features directx              # XeSS 2 from the driver (Windows)
 ```
 
 Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
@@ -524,7 +596,11 @@ Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
 - **Intel** (`xe`: COMPUTE_WALKER, XMX/DPAS), **AMD** (KFD: AQL queues,
   MFMA/WMMA), **NPUs** (Intel NPU, AMD XDNA, RK3588, Ethos-U) with dma-buf
   sharing between iGPU and NPU, **Raspberry Pi** (`v3d` QPU code generation).
-- **Comfort `vulkan`** backend as the universal fallback (cooperative matrix).
+- **Comfort `vulkan`** backend as the universal fallback: the cooperative
+  matrix GEMM runs (`matrix_probe`); next is a `Backend` around it, with
+  shared-memory tiling.
+- **Matrix tiers per vendor** from `numerobis::matrix`: each raw backend's
+  matrix tier picks its instruction from the engine table (`Engine::route`).
 - **DirectX:** DirectStorage (GPU decompression from NVMe into D3D12
   resources) and DirectSR (super resolution) probes; DirectDraw / Direct3D 7
   only if someone needs them.

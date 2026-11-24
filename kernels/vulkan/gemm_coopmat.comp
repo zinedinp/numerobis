@@ -1,0 +1,86 @@
+// gemm_<a>_<a>_<acc> on a matrix engine through VK_KHR_cooperative_matrix:
+// C = alpha * A * B^T + beta * C with numerobis's layout (A MxK, B NxK, both
+// K-contiguous; C MxN; all row-major). B^T read column-major is B.
+//
+// One subgroup per workgroup computes an (RM*TM) x (RN*TN) block of C, RM*RN
+// accumulators held in registers; per K step it loads RM tiles of A and RN
+// of B for RM*RN multiply-adds. The tile TM x TN x TK is the driver's
+// (vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR), set per pipeline as
+// specialization constants 0..2; constant 3 is the subgroup size. M must be
+// a multiple of RM*TM, N of RN*TN, K of TK.
+//
+// Built by scripts/build-kernels.sh, one SPIR-V per type:
+//   A_T: the input type, C_T: the accumulator, S_T: alpha/beta (float, int).
+#version 460
+#pragma use_vulkan_memory_model
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+#ifndef RM
+#define RM 4
+#endif
+#ifndef RN
+#define RN 2
+#endif
+
+layout(constant_id = 0) const uint TM = 8;
+layout(constant_id = 1) const uint TN = 16;
+layout(constant_id = 2) const uint TK = 16;
+layout(local_size_x_id = 3, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer BufA { A_T a[]; };
+layout(set = 0, binding = 1) readonly buffer BufB { A_T b[]; };
+layout(set = 0, binding = 2) buffer BufC { C_T c[]; };
+
+layout(push_constant) uniform Params {
+    uint m;
+    uint n;
+    uint k;
+    S_T alpha;
+    S_T beta;
+} p;
+
+#define ACC coopmat<C_T, gl_ScopeSubgroup, TM, TN, gl_MatrixUseAccumulator>
+
+void main() {
+    const uint m0 = gl_WorkGroupID.y * (RM * TM);
+    const uint n0 = gl_WorkGroupID.x * (RN * TN);
+
+    ACC acc[RM][RN];
+    for (int i = 0; i < RM; ++i) {
+        for (int j = 0; j < RN; ++j) {
+            acc[i][j] = ACC(C_T(0));
+        }
+    }
+
+    for (uint k0 = 0; k0 < p.k; k0 += TK) {
+        coopmat<A_T, gl_ScopeSubgroup, TM, TK, gl_MatrixUseA> ta[RM];
+        coopmat<A_T, gl_ScopeSubgroup, TK, TN, gl_MatrixUseB> tb[RN];
+        for (int i = 0; i < RM; ++i) {
+            coopMatLoad(ta[i], a, (m0 + i * TM) * p.k + k0, p.k, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        for (int j = 0; j < RN; ++j) {
+            coopMatLoad(tb[j], b, (n0 + j * TN) * p.k + k0, p.k, gl_CooperativeMatrixLayoutColumnMajor);
+        }
+        for (int i = 0; i < RM; ++i) {
+            for (int j = 0; j < RN; ++j) {
+                acc[i][j] = coopMatMulAdd(ta[i], tb[j], acc[i][j]);
+            }
+        }
+    }
+
+    for (int i = 0; i < RM; ++i) {
+        for (int j = 0; j < RN; ++j) {
+            const uint at = (m0 + i * TM) * p.n + n0 + j * TN;
+            ACC d = acc[i][j] * C_T(p.alpha);
+            // beta == 0: C is not read (NaNs in C do not propagate).
+            if (p.beta != S_T(0)) {
+                ACC old;
+                coopMatLoad(old, c, at, p.n, gl_CooperativeMatrixLayoutRowMajor);
+                d = d + old * C_T(p.beta);
+            }
+            coopMatStore(d, c, at, p.n, gl_CooperativeMatrixLayoutRowMajor);
+        }
+    }
+}

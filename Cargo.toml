@@ -1,6 +1,6 @@
 [package]
 name = "numerobis"
-version = "0.5.0-pre"
+version = "0.5.0"
 authors = ["Zinedin Polic"]
 edition = "2024"
 rust-version = "1.100.0"
@@ -31,7 +31,7 @@ hip = []
 mock = []
 
 [dependencies]
-miraculix = { version = "=0.6.4-beta", default-features = false }
+miraculix = { version = "=0.6.5-beta", default-features = false }
 
 # The raw backends and dma-bufs are Linux kernel UAPI.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -47,6 +47,14 @@ required-features = ["vulkan"]
 
 [[example]]
 name = "directx_probe"
+required-features = ["directx"]
+
+[[example]]
+name = "matrix_probe"
+required-features = ["vulkan"]
+
+[[example]]
+name = "xess_probe"
 required-features = ["directx"]
 
 # The project's standard: clippy::pedantic, with the exceptions reasoned

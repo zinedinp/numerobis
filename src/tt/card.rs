@@ -14,12 +14,8 @@ use super::sys::{
 use crate::runtime::error::{Error, Result};
 use crate::runtime::os::{Fd, Map, RW};
 
-/// Card generations (PCI device id).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Arch {
-    Wormhole,
-    Blackhole,
-}
+/// Card generations, from the PCI device id ([`crate::pci`]'s table).
+pub use crate::pci::TtArch as Arch;
 
 pub const TLB_2M: u64 = 2 << 20;
 
@@ -94,10 +90,17 @@ impl Card {
             ..Default::default()
         };
         call(&fd, GET_DEVICE_INFO, &mut info)?;
-        let arch = match info.device_id {
-            0x401e => Arch::Wormhole,
-            0xb140 => Arch::Blackhole,
-            d => return Err(Error::Unsupported(format!("Tenstorrent device id {d:#x}"))),
+        // The id table is `pci`'s; Grayskull is known there but not driven.
+        let crate::pci::Architecture::Tenstorrent(arch @ (Arch::Wormhole | Arch::Blackhole)) =
+            crate::pci::Architecture::from_pci(
+                crate::pci::Vendor::Tenstorrent,
+                u32::from(info.device_id),
+            )
+        else {
+            return Err(Error::Unsupported(format!(
+                "Tenstorrent device id {:#x}",
+                info.device_id
+            )));
         };
         let mut drv = get_driver_info {
             in_output_size_bytes: 12,
