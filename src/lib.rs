@@ -27,7 +27,8 @@
 //! | [`intel`], [`amd`], [`nvidia`], [`tt`], [`v3d`] | one module per GPU / card vendor |
 //! | [`npu`] | `accel` subsystem base plus one module per NPU |
 //! | [`loader`] | kernel binary containers (ELF) |
-//! | [`pci`] | which GPU a PCI vendor/device id is, and its driver version: every OS, no backend |
+//! | [`pci`] | which GPU a PCI vendor/device id is, its driver version, and [`pci::bar`]: PCIe link, BAR aperture, resizable BAR (sysfs / cfgmgr32) |
+//! | [`platform`] | per OS: tested, untested or unavailable |
 //! | [`vulkan`] | Vulkan versions, feature bits per version, and a waterfall picking each capability's best route: no bindings, the host calls Vulkan |
 //! | `mock` | host oracle backend (feature `mock`) |
 //!
@@ -61,6 +62,7 @@ pub mod loader;
 pub mod mock;
 pub mod ops;
 pub mod pci;
+pub mod platform;
 pub mod runtime;
 pub mod tiers;
 pub mod vulkan;

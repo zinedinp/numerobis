@@ -6,6 +6,11 @@
 //! The architecture tables hold the ids known to this crate; an id outside
 //! them is [`Architecture::Unknown`], never a guess.
 
+use std::fmt;
+use std::str::FromStr;
+
+pub mod bar;
+
 /// PCI vendor ids.
 pub mod vendor_id {
     pub const AMD: u32 = 0x1002;
@@ -50,6 +55,23 @@ impl Vendor {
             vendor_id::MICROSOFT => Self::Microsoft,
             vendor_id::MESA => Self::Mesa,
             other => Self::Other(other),
+        }
+    }
+
+    /// The PCI vendor id.
+    #[must_use]
+    pub const fn id(self) -> u32 {
+        match self {
+            Self::Amd => vendor_id::AMD,
+            Self::Nvidia => vendor_id::NVIDIA,
+            Self::Intel => vendor_id::INTEL,
+            Self::Arm => vendor_id::ARM,
+            Self::Qualcomm => vendor_id::QUALCOMM,
+            Self::ImgTec => vendor_id::IMGTEC,
+            Self::Apple => vendor_id::APPLE,
+            Self::Microsoft => vendor_id::MICROSOFT,
+            Self::Mesa => vendor_id::MESA,
+            Self::Other(id) => id,
         }
     }
 
@@ -284,21 +306,99 @@ impl DriverOs {
     }
 }
 
+/// A driver version as its vendor counts: up to four numbers, compared
+/// left to right (compare versions of one vendor only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DriverVersion {
+    parts: [u32; 4],
+    len: usize,
+}
+
+impl DriverVersion {
+    /// From its numbers, most significant first; more than four are cut.
+    #[must_use]
+    pub const fn new(parts: &[u32]) -> Self {
+        let mut out = [0; 4];
+        let mut i = 0;
+        while i < parts.len() && i < 4 {
+            out[i] = parts[i];
+            i += 1;
+        }
+        Self { parts: out, len: i }
+    }
+
+    #[must_use]
+    pub fn parts(&self) -> &[u32] {
+        &self.parts[..self.len]
+    }
+}
+
+impl fmt::Display for DriverVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, part) in self.parts().iter().enumerate() {
+            if i > 0 {
+                f.write_str(".")?;
+            }
+            write!(f, "{part}")?;
+        }
+        Ok(())
+    }
+}
+
 /// `VkPhysicalDeviceProperties::driverVersion` as its vendor writes it out:
 /// NVIDIA packs 10.8.8.6 bits, Intel's Windows driver 18.14 bits, everyone
 /// else (Mesa among them) the Vulkan version layout.
 #[must_use]
-pub fn driver_version(vendor: Vendor, raw: u32, os: DriverOs) -> String {
+pub fn driver_version(vendor: Vendor, raw: u32, os: DriverOs) -> DriverVersion {
     match (vendor, os) {
-        (Vendor::Nvidia, _) => format!(
-            "{}.{}.{}.{}",
-            raw >> 22,
-            (raw >> 14) & 0xFF,
-            (raw >> 6) & 0xFF,
-            raw & 0x3F
-        ),
-        (Vendor::Intel, DriverOs::Windows) => format!("{}.{}", raw >> 14, raw & 0x3FFF),
-        _ => format!("{}.{}.{}", raw >> 22, (raw >> 12) & 0x3FF, raw & 0xFFF),
+        (Vendor::Nvidia, _) => {
+            DriverVersion::new(&[raw >> 22, (raw >> 14) & 0xFF, (raw >> 6) & 0xFF, raw & 0x3F])
+        }
+        (Vendor::Intel, DriverOs::Windows) => DriverVersion::new(&[raw >> 14, raw & 0x3FFF]),
+        _ => DriverVersion::new(&[raw >> 22, (raw >> 12) & 0x3FF, raw & 0xFFF]),
+    }
+}
+
+/// A PCI function's address: `domain:bus:device.function`, as Linux names it
+/// (`0000:03:00.0`) and `VK_EXT_pci_bus_info` reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PciAddress {
+    pub domain: u32,
+    pub bus: u8,
+    pub device: u8,
+    pub function: u8,
+}
+
+impl fmt::Display for PciAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:04x}:{:02x}:{:02x}.{:x}",
+            self.domain, self.bus, self.device, self.function
+        )
+    }
+}
+
+impl FromStr for PciAddress {
+    type Err = ();
+
+    /// `0000:03:00.0`; the domain may be left out (`03:00.0`).
+    fn from_str(s: &str) -> Result<Self, ()> {
+        let (rest, function) = s.rsplit_once('.').ok_or(())?;
+        let mut parts = rest.rsplit(':');
+        let device = parts.next().ok_or(())?;
+        let bus = parts.next().ok_or(())?;
+        let domain = parts.next().unwrap_or("0");
+        if parts.next().is_some() {
+            return Err(());
+        }
+        let hex8 = |v: &str| u8::from_str_radix(v, 16).map_err(|_| ());
+        Ok(Self {
+            domain: u32::from_str_radix(domain, 16).map_err(|_| ())?,
+            bus: hex8(bus)?,
+            device: hex8(device)?,
+            function: hex8(function)?,
+        })
     }
 }
 
@@ -343,24 +443,54 @@ mod tests {
         // NVIDIA 566.36: 566 << 22 | 36 << 14.
         let nvidia = (566 << 22) | (36 << 14);
         assert_eq!(
-            driver_version(Vendor::Nvidia, nvidia, DriverOs::Windows),
+            driver_version(Vendor::Nvidia, nvidia, DriverOs::Windows).to_string(),
             "566.36.0.0"
         );
         // Intel on Windows, 101.6559: 101 << 14 | 6559.
         let intel = (101 << 14) + 6559;
         assert_eq!(
-            driver_version(Vendor::Intel, intel, DriverOs::Windows),
+            driver_version(Vendor::Intel, intel, DriverOs::Windows).to_string(),
             "101.6559"
         );
         // Mesa on Linux, 24.3.1 in the Vulkan layout.
         let mesa = (24 << 22) | (3 << 12) | 1;
         assert_eq!(
-            driver_version(Vendor::Intel, mesa, DriverOs::Other),
+            driver_version(Vendor::Intel, mesa, DriverOs::Other).to_string(),
             "24.3.1"
         );
         assert_eq!(
-            driver_version(Vendor::Amd, mesa, DriverOs::Windows),
+            driver_version(Vendor::Amd, mesa, DriverOs::Windows).to_string(),
             "24.3.1"
         );
+    }
+
+    #[test]
+    fn driver_versions_compare_part_by_part() {
+        let old = DriverVersion::new(&[101, 6559]);
+        let new = DriverVersion::new(&[101, 9175]);
+        assert!(old < new);
+        assert_eq!(new.parts(), [101, 9175]);
+        assert_eq!(DriverVersion::new(&[1, 2, 3, 4, 5]).to_string(), "1.2.3.4");
+    }
+
+    #[test]
+    fn pci_addresses_parse_like_linux_names_them() {
+        let a: PciAddress = "0000:03:00.0".parse().unwrap();
+        assert_eq!(
+            a,
+            PciAddress {
+                domain: 0,
+                bus: 3,
+                device: 0,
+                function: 0
+            }
+        );
+        assert_eq!(a.to_string(), "0000:03:00.0");
+        assert_eq!(
+            "0a:1f.7".parse::<PciAddress>().unwrap().to_string(),
+            "0000:0a:1f.7"
+        );
+        assert!("0000:03:00".parse::<PciAddress>().is_err());
+        assert!("1:2:3:4.0".parse::<PciAddress>().is_err());
     }
 }

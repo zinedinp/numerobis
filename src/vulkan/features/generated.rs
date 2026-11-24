@@ -3,7 +3,7 @@
 
 use std::ffi::CStr;
 
-use super::{Field, Version, e, f};
+use super::{Depends, Field, Version, e, f};
 use crate::vulkan::ApiVersion;
 
 /// A feature struct that goes into a `pNext` chain.
@@ -68,6 +68,46 @@ pub enum Chain {
     FifoLatestReady,
     /// `VkPhysicalDevicePortabilitySubsetFeaturesKHR` (`VK_KHR_portability_subset`).
     PortabilitySubset,
+    /// `VkPhysicalDeviceVulkanMemoryModelFeatures`: core 1.2, before that `VK_KHR_vulkan_memory_model`; part of `Vulkan12` from 1.2.
+    VulkanMemoryModel,
+    /// `VkPhysicalDeviceTextureCompressionASTCHDRFeatures`: core 1.3, before that `VK_EXT_texture_compression_astc_hdr`; part of `Vulkan13` from 1.3.
+    TextureCompressionAstcHdr,
+    /// `VkPhysicalDeviceMaintenance4Features`: core 1.3, before that `VK_KHR_maintenance4`; part of `Vulkan13` from 1.3.
+    Maintenance4,
+    /// `VkPhysicalDeviceMaintenance5Features`: core 1.4, before that `VK_KHR_maintenance5`; part of `Vulkan14` from 1.4.
+    Maintenance5,
+    /// `VkPhysicalDeviceMaintenance6Features`: core 1.4, before that `VK_KHR_maintenance6`; part of `Vulkan14` from 1.4.
+    Maintenance6,
+    /// `VkPhysicalDeviceHostImageCopyFeatures`: core 1.4, before that `VK_EXT_host_image_copy`; part of `Vulkan14` from 1.4.
+    HostImageCopy,
+    /// `VkPhysicalDeviceVertexAttributeDivisorFeatures`: core 1.4, before that `VK_KHR_vertex_attribute_divisor`, `VK_EXT_vertex_attribute_divisor`; part of `Vulkan14` from 1.4.
+    VertexAttributeDivisor,
+    /// `VkPhysicalDeviceCooperativeMatrixFeaturesKHR` (`VK_KHR_cooperative_matrix`).
+    CooperativeMatrix,
+    /// `VkPhysicalDeviceShaderBfloat16FeaturesKHR` (`VK_KHR_shader_bfloat16`).
+    ShaderBfloat16,
+    /// `VkPhysicalDeviceShaderFloat8FeaturesEXT` (`VK_EXT_shader_float8`).
+    ShaderFloat8,
+    /// `VkPhysicalDeviceRobustness2FeaturesKHR` (`VK_KHR_robustness2`, `VK_EXT_robustness2`).
+    Robustness2,
+    /// `VkPhysicalDeviceDescriptorBufferFeaturesEXT` (`VK_EXT_descriptor_buffer`).
+    DescriptorBuffer,
+    /// `VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT` (`VK_EXT_graphics_pipeline_library`).
+    GraphicsPipelineLibrary,
+    /// `VkPhysicalDeviceShaderObjectFeaturesEXT` (`VK_EXT_shader_object`).
+    ShaderObject,
+    /// `VkPhysicalDeviceExtendedDynamicStateFeaturesEXT` (`VK_EXT_extended_dynamic_state`).
+    ExtendedDynamicState,
+    /// `VkPhysicalDeviceExtendedDynamicState2FeaturesEXT` (`VK_EXT_extended_dynamic_state2`).
+    ExtendedDynamicState2,
+    /// `VkPhysicalDevicePresentIdFeaturesKHR` (`VK_KHR_present_id`).
+    PresentId,
+    /// `VkPhysicalDevicePresentId2FeaturesKHR` (`VK_KHR_present_id2`).
+    PresentId2,
+    /// `VkPhysicalDevicePresentWaitFeaturesKHR` (`VK_KHR_present_wait`).
+    PresentWait,
+    /// `VkPhysicalDevicePresentWait2FeaturesKHR` (`VK_KHR_present_wait2`).
+    PresentWait2,
 }
 
 impl Chain {
@@ -102,6 +142,26 @@ impl Chain {
         Self::PageableDeviceLocalMemory,
         Self::FifoLatestReady,
         Self::PortabilitySubset,
+        Self::VulkanMemoryModel,
+        Self::TextureCompressionAstcHdr,
+        Self::Maintenance4,
+        Self::Maintenance5,
+        Self::Maintenance6,
+        Self::HostImageCopy,
+        Self::VertexAttributeDivisor,
+        Self::CooperativeMatrix,
+        Self::ShaderBfloat16,
+        Self::ShaderFloat8,
+        Self::Robustness2,
+        Self::DescriptorBuffer,
+        Self::GraphicsPipelineLibrary,
+        Self::ShaderObject,
+        Self::ExtendedDynamicState,
+        Self::ExtendedDynamicState2,
+        Self::PresentId,
+        Self::PresentId2,
+        Self::PresentWait,
+        Self::PresentWait2,
     ];
 
     /// The struct's `VkStructureType` value.
@@ -137,6 +197,26 @@ impl Chain {
             Self::PageableDeviceLocalMemory => 1_000_412_000,
             Self::FifoLatestReady => 1_000_361_000,
             Self::PortabilitySubset => 1_000_163_000,
+            Self::VulkanMemoryModel => 1_000_211_000,
+            Self::TextureCompressionAstcHdr => 1_000_066_000,
+            Self::Maintenance4 => 1_000_413_000,
+            Self::Maintenance5 => 1_000_470_000,
+            Self::Maintenance6 => 1_000_545_000,
+            Self::HostImageCopy => 1_000_270_000,
+            Self::VertexAttributeDivisor => 1_000_190_002,
+            Self::CooperativeMatrix => 1_000_506_000,
+            Self::ShaderBfloat16 => 1_000_141_000,
+            Self::ShaderFloat8 => 1_000_567_000,
+            Self::Robustness2 => 1_000_286_000,
+            Self::DescriptorBuffer => 1_000_316_002,
+            Self::GraphicsPipelineLibrary => 1_000_320_000,
+            Self::ShaderObject => 1_000_482_000,
+            Self::ExtendedDynamicState => 1_000_267_000,
+            Self::ExtendedDynamicState2 => 1_000_377_000,
+            Self::PresentId => 1_000_294_001,
+            Self::PresentId2 => 1_000_479_002,
+            Self::PresentWait => 1_000_248_000,
+            Self::PresentWait2 => 1_000_480_001,
         }
     }
 
@@ -177,6 +257,26 @@ impl Chain {
             }
             Self::FifoLatestReady => "VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR",
             Self::PortabilitySubset => "VkPhysicalDevicePortabilitySubsetFeaturesKHR",
+            Self::VulkanMemoryModel => "VkPhysicalDeviceVulkanMemoryModelFeatures",
+            Self::TextureCompressionAstcHdr => "VkPhysicalDeviceTextureCompressionASTCHDRFeatures",
+            Self::Maintenance4 => "VkPhysicalDeviceMaintenance4Features",
+            Self::Maintenance5 => "VkPhysicalDeviceMaintenance5Features",
+            Self::Maintenance6 => "VkPhysicalDeviceMaintenance6Features",
+            Self::HostImageCopy => "VkPhysicalDeviceHostImageCopyFeatures",
+            Self::VertexAttributeDivisor => "VkPhysicalDeviceVertexAttributeDivisorFeatures",
+            Self::CooperativeMatrix => "VkPhysicalDeviceCooperativeMatrixFeaturesKHR",
+            Self::ShaderBfloat16 => "VkPhysicalDeviceShaderBfloat16FeaturesKHR",
+            Self::ShaderFloat8 => "VkPhysicalDeviceShaderFloat8FeaturesEXT",
+            Self::Robustness2 => "VkPhysicalDeviceRobustness2FeaturesKHR",
+            Self::DescriptorBuffer => "VkPhysicalDeviceDescriptorBufferFeaturesEXT",
+            Self::GraphicsPipelineLibrary => "VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT",
+            Self::ShaderObject => "VkPhysicalDeviceShaderObjectFeaturesEXT",
+            Self::ExtendedDynamicState => "VkPhysicalDeviceExtendedDynamicStateFeaturesEXT",
+            Self::ExtendedDynamicState2 => "VkPhysicalDeviceExtendedDynamicState2FeaturesEXT",
+            Self::PresentId => "VkPhysicalDevicePresentIdFeaturesKHR",
+            Self::PresentId2 => "VkPhysicalDevicePresentId2FeaturesKHR",
+            Self::PresentWait => "VkPhysicalDevicePresentWaitFeaturesKHR",
+            Self::PresentWait2 => "VkPhysicalDevicePresentWait2FeaturesKHR",
         }
     }
 
@@ -213,6 +313,26 @@ impl Chain {
             Self::PageableDeviceLocalMemory => PAGEABLE_DEVICE_LOCAL_MEMORY_FIELDS,
             Self::FifoLatestReady => FIFO_LATEST_READY_FIELDS,
             Self::PortabilitySubset => PORTABILITY_SUBSET_FIELDS,
+            Self::VulkanMemoryModel => VULKAN_MEMORY_MODEL_FIELDS,
+            Self::TextureCompressionAstcHdr => TEXTURE_COMPRESSION_ASTC_HDR_FIELDS,
+            Self::Maintenance4 => MAINTENANCE4_FIELDS,
+            Self::Maintenance5 => MAINTENANCE5_FIELDS,
+            Self::Maintenance6 => MAINTENANCE6_FIELDS,
+            Self::HostImageCopy => HOST_IMAGE_COPY_FIELDS,
+            Self::VertexAttributeDivisor => VERTEX_ATTRIBUTE_DIVISOR_FIELDS,
+            Self::CooperativeMatrix => COOPERATIVE_MATRIX_FIELDS,
+            Self::ShaderBfloat16 => SHADER_BFLOAT16_FIELDS,
+            Self::ShaderFloat8 => SHADER_FLOAT8_FIELDS,
+            Self::Robustness2 => ROBUSTNESS2_FIELDS,
+            Self::DescriptorBuffer => DESCRIPTOR_BUFFER_FIELDS,
+            Self::GraphicsPipelineLibrary => GRAPHICS_PIPELINE_LIBRARY_FIELDS,
+            Self::ShaderObject => SHADER_OBJECT_FIELDS,
+            Self::ExtendedDynamicState => EXTENDED_DYNAMIC_STATE_FIELDS,
+            Self::ExtendedDynamicState2 => EXTENDED_DYNAMIC_STATE2_FIELDS,
+            Self::PresentId => PRESENT_ID_FIELDS,
+            Self::PresentId2 => PRESENT_ID2_FIELDS,
+            Self::PresentWait => PRESENT_WAIT_FIELDS,
+            Self::PresentWait2 => PRESENT_WAIT2_FIELDS,
         }
     }
 
@@ -247,13 +367,20 @@ impl Chain {
             | Self::DescriptorIndexing
             | Self::ScalarBlockLayout
             | Self::TimelineSemaphore
-            | Self::HostQueryReset => Some((ApiVersion::V1_2, Self::Vulkan12)),
+            | Self::HostQueryReset
+            | Self::VulkanMemoryModel => Some((ApiVersion::V1_2, Self::Vulkan12)),
             Self::Synchronization2
             | Self::SubgroupSizeControl
             | Self::DemoteToHelperInvocation
             | Self::IntegerDotProduct
-            | Self::DynamicRendering => Some((ApiVersion::V1_3, Self::Vulkan13)),
-            Self::IndexTypeUint8 => Some((ApiVersion::V1_4, Self::Vulkan14)),
+            | Self::DynamicRendering
+            | Self::TextureCompressionAstcHdr
+            | Self::Maintenance4 => Some((ApiVersion::V1_3, Self::Vulkan13)),
+            Self::IndexTypeUint8
+            | Self::Maintenance5
+            | Self::Maintenance6
+            | Self::HostImageCopy
+            | Self::VertexAttributeDivisor => Some((ApiVersion::V1_4, Self::Vulkan14)),
             _ => None,
         }
     }
@@ -696,6 +823,73 @@ const PORTABILITY_SUBSET_FIELDS: &[Field] = &[
     f("vertexAttributeAccessBeyondStride"),
 ];
 
+const VULKAN_MEMORY_MODEL_FIELDS: &[Field] = &[
+    f("vulkanMemoryModel"),
+    f("vulkanMemoryModelDeviceScope"),
+    f("vulkanMemoryModelAvailabilityVisibilityChains"),
+];
+
+const TEXTURE_COMPRESSION_ASTC_HDR_FIELDS: &[Field] = &[f("textureCompressionASTC_HDR")];
+
+const MAINTENANCE4_FIELDS: &[Field] = &[f("maintenance4")];
+
+const MAINTENANCE5_FIELDS: &[Field] = &[f("maintenance5")];
+
+const MAINTENANCE6_FIELDS: &[Field] = &[f("maintenance6")];
+
+const HOST_IMAGE_COPY_FIELDS: &[Field] = &[f("hostImageCopy")];
+
+const VERTEX_ATTRIBUTE_DIVISOR_FIELDS: &[Field] = &[
+    f("vertexAttributeInstanceRateDivisor"),
+    f("vertexAttributeInstanceRateZeroDivisor"),
+];
+
+const COOPERATIVE_MATRIX_FIELDS: &[Field] = &[
+    f("cooperativeMatrix"),
+    f("cooperativeMatrixRobustBufferAccess"),
+];
+
+const SHADER_BFLOAT16_FIELDS: &[Field] = &[
+    f("shaderBFloat16Type"),
+    f("shaderBFloat16DotProduct"),
+    f("shaderBFloat16CooperativeMatrix"),
+];
+
+const SHADER_FLOAT8_FIELDS: &[Field] = &[f("shaderFloat8"), f("shaderFloat8CooperativeMatrix")];
+
+const ROBUSTNESS2_FIELDS: &[Field] = &[
+    f("robustBufferAccess2"),
+    f("robustImageAccess2"),
+    f("nullDescriptor"),
+];
+
+const DESCRIPTOR_BUFFER_FIELDS: &[Field] = &[
+    f("descriptorBuffer"),
+    f("descriptorBufferCaptureReplay"),
+    f("descriptorBufferImageLayoutIgnored"),
+    f("descriptorBufferPushDescriptors"),
+];
+
+const GRAPHICS_PIPELINE_LIBRARY_FIELDS: &[Field] = &[f("graphicsPipelineLibrary")];
+
+const SHADER_OBJECT_FIELDS: &[Field] = &[f("shaderObject")];
+
+const EXTENDED_DYNAMIC_STATE_FIELDS: &[Field] = &[f("extendedDynamicState")];
+
+const EXTENDED_DYNAMIC_STATE2_FIELDS: &[Field] = &[
+    f("extendedDynamicState2"),
+    f("extendedDynamicState2LogicOp"),
+    f("extendedDynamicState2PatchControlPoints"),
+];
+
+const PRESENT_ID_FIELDS: &[Field] = &[f("presentId")];
+
+const PRESENT_ID2_FIELDS: &[Field] = &[f("presentId2")];
+
+const PRESENT_WAIT_FIELDS: &[Field] = &[f("presentWait")];
+
+const PRESENT_WAIT2_FIELDS: &[Field] = &[f("presentWait2")];
+
 /// The extensions Vulkan 1.1 made core.
 const PROMOTED_1_1: &[&CStr] = &[
     c"VK_KHR_16bit_storage",
@@ -797,6 +991,581 @@ const PROMOTED_1_4: &[&CStr] = &[
     c"VK_EXT_pipeline_protected_access",
     c"VK_EXT_pipeline_robustness",
 ];
+
+/// The `depends` expression of every extension the routes name, and of
+/// their dependencies, as `vk.xml` states it.
+pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
+    (
+        c"VK_EXT_calibrated_timestamps",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (c"VK_EXT_debug_utils", Depends::All(&[])),
+    (
+        c"VK_EXT_descriptor_buffer",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Any(&[
+                    Depends::All(&[
+                        Depends::Any(&[
+                            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                            Depends::Version(ApiVersion::V1_1),
+                        ]),
+                        Depends::Extension(c"VK_KHR_buffer_device_address"),
+                        Depends::Extension(c"VK_EXT_descriptor_indexing"),
+                    ]),
+                    Depends::Version(ApiVersion::V1_2),
+                ]),
+                Depends::Extension(c"VK_KHR_synchronization2"),
+            ]),
+            Depends::Version(ApiVersion::V1_3),
+        ]),
+    ),
+    (
+        c"VK_EXT_descriptor_indexing",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Extension(c"VK_KHR_maintenance3"),
+            ]),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_extended_dynamic_state",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_extended_dynamic_state2",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_external_memory_dma_buf",
+        Depends::Extension(c"VK_KHR_external_memory_fd"),
+    ),
+    (
+        c"VK_EXT_graphics_pipeline_library",
+        Depends::All(&[
+            Depends::Any(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Version(ApiVersion::V1_1),
+            ]),
+            Depends::Extension(c"VK_KHR_pipeline_library"),
+        ]),
+    ),
+    (
+        c"VK_EXT_host_image_copy",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Any(&[
+                    Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                    Depends::Version(ApiVersion::V1_1),
+                ]),
+                Depends::Extension(c"VK_KHR_copy_commands2"),
+                Depends::Extension(c"VK_KHR_format_feature_flags2"),
+            ]),
+            Depends::Version(ApiVersion::V1_3),
+        ]),
+    ),
+    (
+        c"VK_EXT_host_query_reset",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_image_drm_format_modifier",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Any(&[
+                    Depends::All(&[
+                        Depends::Extension(c"VK_KHR_bind_memory2"),
+                        Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                        Depends::Extension(c"VK_KHR_sampler_ycbcr_conversion"),
+                    ]),
+                    Depends::Version(ApiVersion::V1_1),
+                ]),
+                Depends::Extension(c"VK_KHR_image_format_list"),
+            ]),
+            Depends::Version(ApiVersion::V1_2),
+        ]),
+    ),
+    (
+        c"VK_EXT_index_type_uint8",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_memory_budget",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_memory_priority",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_mesh_shader",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_spirv_1_4"),
+            Depends::Version(ApiVersion::V1_2),
+        ]),
+    ),
+    (
+        c"VK_EXT_pageable_device_local_memory",
+        Depends::Extension(c"VK_EXT_memory_priority"),
+    ),
+    (
+        c"VK_EXT_pci_bus_info",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_present_mode_fifo_latest_ready",
+        Depends::Extension(c"VK_KHR_swapchain"),
+    ),
+    (
+        c"VK_EXT_robustness2",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_sampler_filter_minmax",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_scalar_block_layout",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_shader_demote_to_helper_invocation",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_shader_float8",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_shader_object",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Any(&[
+                    Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                    Depends::Version(ApiVersion::V1_1),
+                ]),
+                Depends::Extension(c"VK_KHR_dynamic_rendering"),
+            ]),
+            Depends::Version(ApiVersion::V1_3),
+        ]),
+    ),
+    (
+        c"VK_EXT_subgroup_size_control",
+        Depends::Version(ApiVersion::V1_1),
+    ),
+    (
+        c"VK_EXT_texture_compression_astc_hdr",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_EXT_vertex_attribute_divisor",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_16bit_storage",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Extension(c"VK_KHR_storage_buffer_storage_class"),
+            ]),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_8bit_storage",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Extension(c"VK_KHR_storage_buffer_storage_class"),
+            ]),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (c"VK_KHR_bind_memory2", Depends::All(&[])),
+    (
+        c"VK_KHR_buffer_device_address",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Extension(c"VK_KHR_device_group"),
+            ]),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_calibrated_timestamps",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_cooperative_matrix",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_copy_commands2",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_create_renderpass2",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Extension(c"VK_KHR_multiview"),
+                Depends::Extension(c"VK_KHR_maintenance2"),
+            ]),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_depth_stencil_resolve",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_create_renderpass2"),
+            Depends::Version(ApiVersion::V1_2),
+        ]),
+    ),
+    (
+        c"VK_KHR_device_group",
+        Depends::Extension(c"VK_KHR_device_group_creation"),
+    ),
+    (c"VK_KHR_device_group_creation", Depends::All(&[])),
+    (c"VK_KHR_draw_indirect_count", Depends::All(&[])),
+    (
+        c"VK_KHR_driver_properties",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_dynamic_rendering",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Any(&[
+                    Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                    Depends::Version(ApiVersion::V1_1),
+                ]),
+                Depends::Extension(c"VK_KHR_depth_stencil_resolve"),
+            ]),
+            Depends::Version(ApiVersion::V1_2),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_fence_capabilities",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_memory",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_external_memory_capabilities"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_memory_capabilities",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_memory_fd",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_external_memory"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_memory_win32",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_external_memory"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_semaphore",
+        Depends::Extension(c"VK_KHR_external_semaphore_capabilities"),
+    ),
+    (
+        c"VK_KHR_external_semaphore_capabilities",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_semaphore_fd",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_external_semaphore"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_external_semaphore_win32",
+        Depends::Extension(c"VK_KHR_external_semaphore"),
+    ),
+    (
+        c"VK_KHR_format_feature_flags2",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (c"VK_KHR_get_memory_requirements2", Depends::All(&[])),
+    (c"VK_KHR_get_physical_device_properties2", Depends::All(&[])),
+    (
+        c"VK_KHR_get_surface_capabilities2",
+        Depends::Extension(c"VK_KHR_surface"),
+    ),
+    (c"VK_KHR_image_format_list", Depends::All(&[])),
+    (
+        c"VK_KHR_index_type_uint8",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (c"VK_KHR_maintenance1", Depends::All(&[])),
+    (c"VK_KHR_maintenance2", Depends::All(&[])),
+    (
+        c"VK_KHR_maintenance3",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (c"VK_KHR_maintenance4", Depends::Version(ApiVersion::V1_1)),
+    (
+        c"VK_KHR_maintenance5",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Version(ApiVersion::V1_1),
+                Depends::Extension(c"VK_KHR_dynamic_rendering"),
+            ]),
+            Depends::Version(ApiVersion::V1_3),
+        ]),
+    ),
+    (c"VK_KHR_maintenance6", Depends::Version(ApiVersion::V1_1)),
+    (
+        c"VK_KHR_multiview",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (c"VK_KHR_pipeline_library", Depends::All(&[])),
+    (c"VK_KHR_portability_enumeration", Depends::All(&[])),
+    (
+        c"VK_KHR_portability_subset",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_present_id",
+        Depends::All(&[
+            Depends::Extension(c"VK_KHR_swapchain"),
+            Depends::Any(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Version(ApiVersion::V1_1),
+            ]),
+        ]),
+    ),
+    (
+        c"VK_KHR_present_id2",
+        Depends::All(&[
+            Depends::Extension(c"VK_KHR_get_surface_capabilities2"),
+            Depends::Extension(c"VK_KHR_surface"),
+            Depends::Extension(c"VK_KHR_swapchain"),
+        ]),
+    ),
+    (
+        c"VK_KHR_present_mode_fifo_latest_ready",
+        Depends::Extension(c"VK_KHR_swapchain"),
+    ),
+    (
+        c"VK_KHR_present_wait",
+        Depends::All(&[
+            Depends::Extension(c"VK_KHR_swapchain"),
+            Depends::Extension(c"VK_KHR_present_id"),
+        ]),
+    ),
+    (
+        c"VK_KHR_present_wait2",
+        Depends::All(&[
+            Depends::Extension(c"VK_KHR_get_surface_capabilities2"),
+            Depends::Extension(c"VK_KHR_surface"),
+            Depends::Extension(c"VK_KHR_swapchain"),
+            Depends::Extension(c"VK_KHR_present_id2"),
+        ]),
+    ),
+    (
+        c"VK_KHR_push_descriptor",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_robustness2",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_sampler_ycbcr_conversion",
+        Depends::Any(&[
+            Depends::All(&[
+                Depends::Extension(c"VK_KHR_maintenance1"),
+                Depends::Extension(c"VK_KHR_bind_memory2"),
+                Depends::Extension(c"VK_KHR_get_memory_requirements2"),
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            ]),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_shader_bfloat16",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (c"VK_KHR_shader_draw_parameters", Depends::All(&[])),
+    (
+        c"VK_KHR_shader_float16_int8",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_shader_float_controls",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_shader_integer_dot_product",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_spirv_1_4",
+        Depends::All(&[
+            Depends::Version(ApiVersion::V1_1),
+            Depends::Extension(c"VK_KHR_shader_float_controls"),
+        ]),
+    ),
+    (c"VK_KHR_storage_buffer_storage_class", Depends::All(&[])),
+    (c"VK_KHR_surface", Depends::All(&[])),
+    (c"VK_KHR_swapchain", Depends::Extension(c"VK_KHR_surface")),
+    (
+        c"VK_KHR_synchronization2",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_timeline_semaphore",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_vertex_attribute_divisor",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+    (
+        c"VK_KHR_vulkan_memory_model",
+        Depends::Any(&[
+            Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+            Depends::Version(ApiVersion::V1_1),
+        ]),
+    ),
+];
+
+/// `sType` values of the property structs the probe reads.
+pub(crate) mod s_type {
+    /// `VkPhysicalDeviceProperties2`.
+    pub const PROPERTIES_2: i32 = 1_000_059_001;
+    /// `VkPhysicalDeviceSubgroupProperties`.
+    pub const SUBGROUP_PROPERTIES: i32 = 1_000_094_000;
+    /// `VkPhysicalDeviceDriverProperties`.
+    pub const DRIVER_PROPERTIES: i32 = 1_000_196_000;
+    /// `VkPhysicalDevicePCIBusInfoPropertiesEXT`.
+    pub const PCI_BUS_INFO_PROPERTIES: i32 = 1_000_212_000;
+    /// `VkPhysicalDeviceMemoryProperties2`.
+    pub const MEMORY_PROPERTIES_2: i32 = 1_000_059_006;
+    /// `VkPhysicalDeviceMemoryBudgetPropertiesEXT`.
+    pub const MEMORY_BUDGET_PROPERTIES: i32 = 1_000_237_000;
+}
 
 /// Every instance extension: enabled at `vkCreateInstance`, never at
 /// `vkCreateDevice`.

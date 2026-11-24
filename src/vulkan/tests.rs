@@ -157,7 +157,7 @@ fn every_capability_has_a_unique_name_and_valid_routes() {
                     }
                 }
                 Route::Extension { fields, .. } => assert_eq!(fields, [] as [&str; 0]),
-                Route::Subgroup { .. } => {}
+                Route::Version { .. } | Route::Subgroup { .. } => {}
             }
             // A promoted extension needs a core route before it that
             // covers the versions where the extension is skipped.
@@ -166,7 +166,7 @@ fn every_capability_has_a_unique_name_and_valid_routes() {
             {
                 let covered = spec.routes[..i]
                     .iter()
-                    .any(|r| matches!(*r, Route::Core { since, .. } if since <= core));
+                    .any(|r| matches!(*r, Route::Core { since, .. } | Route::Version { since } if since <= core));
                 assert!(covered, "{} {name:?}", spec.name);
             }
         }
@@ -399,8 +399,10 @@ fn an_available_route_that_says_no_ends_the_waterfall() {
         [
             c"VK_KHR_present_mode_fifo_latest_ready",
             c"VK_EXT_present_mode_fifo_latest_ready",
+            c"VK_KHR_swapchain",
         ],
-    );
+    )
+    .with_instance([c"VK_KHR_surface"]);
     let mut probe = Probe::new(
         offer,
         &[Capability::FifoLatestReady, Capability::DrawIndirectCount],
@@ -526,29 +528,44 @@ fn absorbed_structs_are_runs_of_their_version_struct() {
     }
 }
 
+fn met(dep: &features::Depends, api: V, enabled: &[&CStr], instance: &[&CStr]) -> bool {
+    use features::Depends;
+    match *dep {
+        Depends::Version(v) => api >= v,
+        Depends::Extension(n) => {
+            features::promoted_in(n).is_some_and(|v| v <= api)
+                || enabled.contains(&n)
+                || instance.contains(&n)
+        }
+        Depends::All(all) => all.iter().all(|d| met(d, api, enabled, instance)),
+        Depends::Any(any) => any.iter().any(|d| met(d, api, enabled, instance)),
+        Depends::Never => false,
+    }
+}
+
 /// Every route offered, every bit on: whatever a device works at, no chain
 /// holds a single struct beside the version struct that absorbed it, and no
 /// version struct the device can't take.
 #[test]
 fn no_version_makes_an_invalid_chain() {
-    let all_extensions: Vec<&CStr> = Capability::ALL
-        .iter()
-        .flat_map(|cap| cap.spec().routes)
-        .filter_map(|route| match *route {
-            Route::Extension { name, deps, .. } => {
-                Some(std::iter::once(name).chain(deps.iter().copied()))
-            }
-            _ => None,
-        })
-        .flatten()
+    // Every extension the routes name and everything they depend on.
+    let all_extensions: Vec<&CStr> = features::known_extensions()
+        .filter(|&n| !features::is_instance_extension(n))
         .chain([features::PORTABILITY_SUBSET_EXTENSION])
         .collect();
     let every_bit: Vec<(Chain, &str)> = Chain::ALL
         .iter()
         .flat_map(|&c| c.fields().iter().map(move |f| (c, f.name)))
         .collect();
+    let every_instance: Vec<&CStr> = features::known_extensions()
+        .filter(|&n| features::is_instance_extension(n))
+        .collect();
     for api in [V::V1_0, V::V1_1, V::V1_2, V::V1_3, V::V1_4] {
-        for instance in [&[][..], &[features::GET_PHYSICAL_DEVICE_PROPERTIES2][..]] {
+        for instance in [
+            &[][..],
+            &[features::GET_PHYSICAL_DEVICE_PROPERTIES2][..],
+            &every_instance[..],
+        ] {
             let offer = Offer::new(api, V::V1_4, all_extensions.iter().copied())
                 .with_instance(instance.iter().copied());
             let mut probe = Probe::new(offer, Capability::ALL);
@@ -566,6 +583,15 @@ fn no_version_makes_an_invalid_chain() {
             }
             for name in plan.extensions() {
                 assert!(!features::is_instance_extension(name), "{name:?}");
+                // VUID-vkCreateDevice-ppEnabledExtensionNames-01387: what an
+                // enabled extension depends on is enabled, core or on the
+                // instance.
+                if let Some(dep) = features::depends(name) {
+                    assert!(
+                        met(dep, api, plan.extensions(), instance),
+                        "{api}: {name:?} without its dependencies {dep:?}"
+                    );
+                }
             }
         }
     }
@@ -825,7 +851,10 @@ fn the_properties_query_carries_the_subgroup_properties() {
         assert_eq!((*head).s_type, 1_000_059_001);
         let sub = (*head).p_next.cast::<RawSubgroup>();
         assert_eq!((*sub).s_type, 1_000_094_000);
-        assert!((*sub).p_next.is_null());
+        // At 1.3 the driver properties follow, and nothing after them.
+        let driver = (*sub).p_next.cast::<Raw>();
+        assert_eq!((*driver).s_type, 1_000_196_000);
+        assert!((*driver).p_next.is_null());
         (*sub).size = 64;
         (*sub).stages = stage::COMPUTE;
         (*sub).operations = sg::BASIC | sg::BALLOT;
@@ -845,4 +874,309 @@ fn the_properties_query_carries_the_subgroup_properties() {
     );
     let _ = probe.properties2();
     assert_eq!(probe.plan().outcomes()[0].verdict, Verdict::SubgroupUnread);
+}
+
+use super::{DeviceInfo, DeviceType, Os, Quirk, Status, rank};
+
+#[test]
+fn version_routes_need_no_bits() {
+    let cap = [Capability::ExtendedDynamicState];
+    let mut probe = Probe::new(Offer::new(V::V1_3, V::V1_3, []), &cap);
+    let queried = fill(&mut probe, &[]);
+    assert_eq!(queried, [Chain::Core10]);
+    let plan = probe.plan();
+    assert!(matches!(
+        plan.route(Capability::ExtendedDynamicState),
+        Some(Route::Version { since: V::V1_3 })
+    ));
+    assert_eq!(plan.extensions(), [] as [&CStr; 0]);
+    // On 1.2 the extension and its bit decide.
+    let offer = Offer::new(V::V1_2, V::V1_2, [c"VK_EXT_extended_dynamic_state"]);
+    let mut probe = Probe::new(offer, &cap);
+    fill(
+        &mut probe,
+        &[(Chain::ExtendedDynamicState, "extendedDynamicState")],
+    );
+    let plan = probe.plan();
+    assert!(plan.has(Capability::ExtendedDynamicState));
+    assert_eq!(plan.extensions(), [c"VK_EXT_extended_dynamic_state"]);
+}
+
+#[test]
+fn os_specific_capabilities_are_skipped_elsewhere() {
+    let offer = || {
+        Offer::new(
+            V::V1_3,
+            V::V1_3,
+            [
+                c"VK_KHR_external_memory_win32",
+                c"VK_KHR_external_memory_fd",
+                c"VK_EXT_external_memory_dma_buf",
+            ],
+        )
+    };
+    let caps = [
+        Capability::ExternalMemoryWin32,
+        Capability::ExternalMemoryFd,
+        Capability::DmaBuf,
+    ];
+    let windows = Probe::new(offer().with_os(Os::Windows), &caps).plan();
+    assert!(windows.has(Capability::ExternalMemoryWin32));
+    assert_eq!(
+        windows.outcome(Capability::DmaBuf).map(|o| o.verdict),
+        Some(Verdict::Unavailable(Os::Windows))
+    );
+    assert_eq!(windows.extensions(), [c"VK_KHR_external_memory_win32"]);
+    assert!(
+        windows
+            .to_string()
+            .contains("- interop.dma_buf: not on Windows"),
+        "{windows}"
+    );
+    let linux = Probe::new(offer().with_os(Os::Linux), &caps).plan();
+    assert_eq!(
+        linux.lacking(&caps),
+        [Capability::ExternalMemoryWin32],
+        "{linux}"
+    );
+    assert_eq!(
+        linux.extensions(),
+        [
+            c"VK_KHR_external_memory_fd",
+            c"VK_EXT_external_memory_dma_buf"
+        ]
+    );
+    // Neither exists on another OS.
+    let other = Probe::new(offer().with_os(Os::Other), &caps).plan();
+    assert_eq!(other.lacking(&caps).len(), 3);
+}
+
+#[test]
+fn needs_are_asked_for_and_gate_the_capability() {
+    let offer = || {
+        Offer::new(
+            V::V1_2,
+            V::V1_2,
+            [
+                c"VK_EXT_shader_object",
+                c"VK_KHR_dynamic_rendering",
+                c"VK_KHR_depth_stencil_resolve",
+                c"VK_KHR_create_renderpass2",
+            ],
+        )
+    };
+    let mut probe = Probe::new(offer(), &[Capability::ShaderObject]);
+    // Dynamic rendering is off: shader objects fall with it.
+    fill(&mut probe, &[(Chain::ShaderObject, "shaderObject")]);
+    let plan = probe.plan();
+    let shader_object = plan.outcome(Capability::ShaderObject).expect("asked");
+    assert_eq!(
+        shader_object.verdict,
+        Verdict::Needs(Capability::DynamicRendering)
+    );
+    let dynamic = plan.outcome(Capability::DynamicRendering).expect("implied");
+    assert!(dynamic.implied && !dynamic.granted());
+    assert_eq!(plan.extensions(), [] as [&CStr; 0], "{plan}");
+    assert!(
+        plan.to_string()
+            .contains("- pipeline.shader_object: needs dynamic_rendering"),
+        "{plan}"
+    );
+    // With it both are granted, and the chain carries both bits.
+    let mut probe = Probe::new(offer(), &[Capability::ShaderObject]);
+    fill(
+        &mut probe,
+        &[
+            (Chain::ShaderObject, "shaderObject"),
+            (Chain::Vulkan12, "drawIndirectCount"),
+            (Chain::DynamicRendering, "dynamicRendering"),
+        ],
+    );
+    let plan = probe.plan();
+    assert_eq!(plan.lacking(&[Capability::ShaderObject]), []);
+    let enabled: Vec<Chain> = enabled_chain(&plan).into_iter().map(|(c, _)| c).collect();
+    assert_eq!(
+        enabled,
+        [Chain::Core10, Chain::ShaderObject, Chain::DynamicRendering]
+    );
+    assert!(plan.extensions().contains(&c"VK_EXT_shader_object"));
+}
+
+#[test]
+fn quirks_turn_a_granted_capability_off() {
+    let offer = Offer::new(V::V1_3, V::V1_3, [c"VK_EXT_mesh_shader"]);
+    let quirk = Quirk {
+        capability: Capability::MeshShader,
+        vendor: None,
+        os: None,
+        driver_below: None,
+        reason: "hangs in this test",
+    };
+    let mut probe = Probe::new(offer, &[Capability::MeshShader]).with_quirks(&[quirk]);
+    fill(&mut probe, &[(Chain::MeshShader, "meshShader")]);
+    let plan = probe.plan();
+    assert_eq!(
+        plan.outcome(Capability::MeshShader).map(|o| o.verdict),
+        Some(Verdict::Quirk("hangs in this test"))
+    );
+    assert_eq!(plan.extensions(), [] as [&CStr; 0]);
+}
+
+/// A `VkPhysicalDeviceProperties` header as a driver writes it.
+unsafe fn write_properties(probe: &mut Probe, kind: u32, vendor: u32, device: u32, name: &[u8]) {
+    // SAFETY: the probe owns the chain; offsets of VkPhysicalDeviceProperties.
+    unsafe {
+        let props = probe.properties2().cast::<u8>().add(16);
+        for (at, v) in [
+            (0, V::V1_3.raw()),
+            (4, (101 << 14) + 9175),
+            (8, vendor),
+            (12, device),
+            (16, kind),
+        ] {
+            props.add(at).cast::<u32>().write_unaligned(v);
+        }
+        props.add(20).copy_from(name.as_ptr(), name.len());
+    }
+}
+
+/// A `VkPhysicalDeviceMemoryProperties`: one VRAM heap of `vram` bytes, a
+/// host heap, and a `DEVICE_LOCAL|HOST_VISIBLE` type on a heap of `visible`.
+unsafe fn write_memory(probe: &mut Probe, vram: u64, visible: u64) {
+    // SAFETY: the probe owns the struct; offsets of VkPhysicalDeviceMemoryProperties.
+    unsafe {
+        let m = probe.memory_properties().cast::<u8>();
+        let types: [(u32, u32); 3] = [(1, 0), (6, 1), (7, if visible == vram { 0 } else { 2 })];
+        m.cast::<u32>().write_unaligned(3);
+        for (i, (flags, heap)) in types.iter().enumerate() {
+            m.add(4 + 8 * i).cast::<u32>().write_unaligned(*flags);
+            m.add(8 + 8 * i).cast::<u32>().write_unaligned(*heap);
+        }
+        let heaps: [(u64, u32); 3] = [(vram, 1), (32 << 30, 0), (visible, 1)];
+        m.add(260).cast::<u32>().write_unaligned(3);
+        for (i, (size, flags)) in heaps.iter().enumerate() {
+            m.add(264 + 16 * i).cast::<u64>().write_unaligned(*size);
+            m.add(272 + 16 * i).cast::<u32>().write_unaligned(*flags);
+        }
+    }
+}
+
+#[test]
+fn device_and_memory_flow_into_the_plan_and_the_ranking() {
+    let caps = [Capability::DynamicRendering, Capability::MultiDrawIndirect];
+    // A discrete GPU without resizable BAR, granting dynamic rendering only.
+    let mut discrete = Probe::new(Offer::new(V::V1_3, V::V1_3, []).with_os(Os::Windows), &caps);
+    fill(&mut discrete, &[(Chain::Vulkan13, "dynamicRendering")]);
+    // SAFETY: as a driver writes them.
+    unsafe {
+        write_properties(&mut discrete, 2, 0x8086, 0xE20B, b"Arc B580\0");
+        write_memory(&mut discrete, 12 << 30, 256 << 20);
+    }
+    let discrete = discrete.plan();
+    let info = discrete.device_info().expect("read");
+    assert_eq!(
+        (info.device_type, info.name.as_str()),
+        (DeviceType::DiscreteGpu, "Arc B580")
+    );
+    assert_eq!(
+        discrete.memory().map(super::Memory::cpu_visible_vram),
+        Some(256 << 20)
+    );
+    let log = discrete.to_string();
+    assert!(
+        log.contains("  device: Arc B580, discrete, Intel Xe2-HPG [8086:e20b], driver 101.9175"),
+        "{log}"
+    );
+    assert!(
+        log.contains("  memory: 12 GiB VRAM, 256 MiB CPU-visible, 32 GiB host"),
+        "{log}"
+    );
+    // An integrated GPU granting both.
+    let mut integrated = Probe::new(Offer::new(V::V1_3, V::V1_3, []).with_os(Os::Windows), &caps);
+    fill(
+        &mut integrated,
+        &[
+            (Chain::Vulkan13, "dynamicRendering"),
+            (Chain::Core10, "multiDrawIndirect"),
+            (Chain::Core10, "drawIndirectFirstInstance"),
+        ],
+    );
+    // SAFETY: as above.
+    unsafe { write_properties(&mut integrated, 1, 0x8086, 0xA780, b"UHD 770\0") };
+    let integrated = integrated.plan();
+    let unknown = Probe::new(Offer::new(V::V1_3, V::V1_3, []), &caps).plan();
+    let plans = [integrated, discrete, unknown];
+    // Discrete first although it grants less; the unknown device has nothing.
+    assert_eq!(rank(&plans, &[Capability::DynamicRendering]), [1, 0]);
+    assert_eq!(rank(&plans, &caps), [0]);
+    // A host that read the properties itself.
+    let named = DeviceInfo {
+        name: "given".into(),
+        ..plans[1].device_info().expect("read").clone()
+    };
+    let plan = Probe::new(Offer::new(V::V1_3, V::V1_3, []).with_device(named), &[]).plan();
+    assert_eq!(plan.device_info().map(|d| d.name.as_str()), Some("given"));
+}
+
+#[test]
+fn untested_platforms_are_marked_in_the_log() {
+    let cap = [Capability::SamplerAnisotropy];
+    for os in [Os::Linux, Os::Windows] {
+        let mut probe = Probe::new(Offer::new(V::V1_3, V::V1_3, []).with_os(os), &cap);
+        fill(&mut probe, &[(Chain::Core10, "samplerAnisotropy")]);
+        let plan = probe.plan();
+        let outcome = plan.outcome(Capability::SamplerAnisotropy).expect("asked");
+        let untested = Capability::SamplerAnisotropy.spec().support.on(os) == Status::Untested;
+        assert_eq!(outcome.untested_on, untested.then_some(os));
+        assert_eq!(
+            plan.to_string().contains(&format!("(untested on {os})")),
+            untested,
+            "{plan}"
+        );
+    }
+}
+
+#[test]
+fn support_flags_are_consistent() {
+    for &cap in Capability::ALL {
+        let spec = cap.spec();
+        // Win32 routes exist on Windows only, fd and dma-buf routes on Linux only.
+        let names: Vec<&CStr> = spec
+            .routes
+            .iter()
+            .filter_map(|r| match *r {
+                Route::Extension { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect();
+        let win32 = names.iter().any(|n| n.to_bytes().ends_with(b"_win32"));
+        let posix = names.iter().any(|n| {
+            let n = n.to_bytes();
+            n.ends_with(b"_fd") || n.ends_with(b"_dma_buf") || n.ends_with(b"drm_format_modifier")
+        });
+        assert_eq!(
+            spec.support.linux == Status::Unavailable,
+            win32,
+            "{}",
+            spec.name
+        );
+        assert_eq!(
+            spec.support.windows == Status::Unavailable,
+            posix,
+            "{}",
+            spec.name
+        );
+        // Needs resolve to other capabilities, without cycles.
+        let mut seen = vec![cap];
+        let mut i = 0;
+        while i < seen.len() {
+            for &need in seen[i].spec().needs {
+                assert_ne!(need, cap, "{} needs itself", spec.name);
+                if !seen.contains(&need) {
+                    seen.push(need);
+                }
+            }
+            i += 1;
+        }
+    }
 }

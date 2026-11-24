@@ -59,6 +59,36 @@ CHAINS = [
     ("PageableDeviceLocalMemory", "VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT"),
     ("FifoLatestReady", "VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR"),
     ("PortabilitySubset", "VkPhysicalDevicePortabilitySubsetFeaturesKHR"),
+    ("VulkanMemoryModel", "VkPhysicalDeviceVulkanMemoryModelFeatures"),
+    ("TextureCompressionAstcHdr", "VkPhysicalDeviceTextureCompressionASTCHDRFeatures"),
+    ("Maintenance4", "VkPhysicalDeviceMaintenance4Features"),
+    ("Maintenance5", "VkPhysicalDeviceMaintenance5Features"),
+    ("Maintenance6", "VkPhysicalDeviceMaintenance6Features"),
+    ("HostImageCopy", "VkPhysicalDeviceHostImageCopyFeatures"),
+    ("VertexAttributeDivisor", "VkPhysicalDeviceVertexAttributeDivisorFeatures"),
+    ("CooperativeMatrix", "VkPhysicalDeviceCooperativeMatrixFeaturesKHR"),
+    ("ShaderBfloat16", "VkPhysicalDeviceShaderBfloat16FeaturesKHR"),
+    ("ShaderFloat8", "VkPhysicalDeviceShaderFloat8FeaturesEXT"),
+    ("Robustness2", "VkPhysicalDeviceRobustness2FeaturesKHR"),
+    ("DescriptorBuffer", "VkPhysicalDeviceDescriptorBufferFeaturesEXT"),
+    ("GraphicsPipelineLibrary", "VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT"),
+    ("ShaderObject", "VkPhysicalDeviceShaderObjectFeaturesEXT"),
+    ("ExtendedDynamicState", "VkPhysicalDeviceExtendedDynamicStateFeaturesEXT"),
+    ("ExtendedDynamicState2", "VkPhysicalDeviceExtendedDynamicState2FeaturesEXT"),
+    ("PresentId", "VkPhysicalDevicePresentIdFeaturesKHR"),
+    ("PresentId2", "VkPhysicalDevicePresentId2FeaturesKHR"),
+    ("PresentWait", "VkPhysicalDevicePresentWaitFeaturesKHR"),
+    ("PresentWait2", "VkPhysicalDevicePresentWait2FeaturesKHR"),
+]
+
+# Property and query structs the probe reads: their sType values.
+PROPERTIES = [
+    ("PROPERTIES_2", "VkPhysicalDeviceProperties2"),
+    ("SUBGROUP_PROPERTIES", "VkPhysicalDeviceSubgroupProperties"),
+    ("DRIVER_PROPERTIES", "VkPhysicalDeviceDriverProperties"),
+    ("PCI_BUS_INFO_PROPERTIES", "VkPhysicalDevicePCIBusInfoPropertiesEXT"),
+    ("MEMORY_PROPERTIES_2", "VkPhysicalDeviceMemoryProperties2"),
+    ("MEMORY_BUDGET_PROPERTIES", "VkPhysicalDeviceMemoryBudgetPropertiesEXT"),
 ]
 
 # Core bits whose extension had no feature struct (being offered was
@@ -141,6 +171,7 @@ class Registry:
                 "vulkan": "vulkan" in supported,
                 "type": ext.get("type"),
                 "promotedto": ext.get("promotedto"),
+                "depends": ext.get("depends"),
                 "types": {self.resolve(t) for t in types},
             }
 
@@ -212,6 +243,72 @@ class Registry:
         )
 
 
+def parse_depends(text):
+    """`a+b`, `a,b`, parentheses; `+` and `,` never mix unparenthesised."""
+    tokens = re.findall(r"[A-Za-z0-9_:]+|[+,()]", text)
+    pos = 0
+
+    def atom():
+        nonlocal pos
+        t = tokens[pos]
+        pos += 1
+        if t == "(":
+            e = expr()
+            if tokens[pos] != ")":
+                fail(f"depends {text!r}: missing )")
+            pos += 1
+            return e
+        m = re.fullmatch(r"VK_VERSION_(\d+)_(\d+)", t)
+        if m:
+            return ("Version", (int(m.group(1)), int(m.group(2))))
+        if t.startswith("VKSC_"):
+            return ("Never",)
+        if "::" in t:
+            fail(f"depends {text!r}: feature dependency {t}")
+        return ("Extension", t)
+
+    def expr():
+        nonlocal pos
+        items, op = [atom()], None
+        while pos < len(tokens) and tokens[pos] in "+,":
+            if op and tokens[pos] != op:
+                fail(f"depends {text!r}: + and , mixed without parentheses")
+            op = tokens[pos]
+            pos += 1
+            items.append(atom())
+        if len(items) == 1:
+            return items[0]
+        return ("All" if op == "+" else "Any", items)
+
+    e = expr()
+    if pos != len(tokens):
+        fail(f"depends {text!r}: trailing tokens")
+    return e
+
+
+def depends_rust(e):
+    kind = e[0]
+    if kind == "Version":
+        major, minor = e[1]
+        if major == 1 and minor <= 4:
+            return f"Depends::Version(ApiVersion::V{major}_{minor})"
+        return f"Depends::Version(ApiVersion::new({major}, {minor}))"
+    if kind == "Never":
+        return "Depends::Never"
+    if kind == "Extension":
+        return f'Depends::Extension(c"{e[1]}")'
+    inner = ", ".join(depends_rust(x) for x in e[1])
+    return f"Depends::{kind}(&[{inner}])"
+
+
+def depends_names(e):
+    if e[0] == "Extension":
+        yield e[1]
+    elif e[0] in ("All", "Any"):
+        for x in e[1]:
+            yield from depends_names(x)
+
+
 def ext_order(name):
     vendor = name.split("_")[1]
     return ({"KHR": 0, "EXT": 1}.get(vendor, 2), name)
@@ -238,7 +335,7 @@ def dotted(v):
     return v.replace("_", ".")
 
 
-def generate(reg):
+def generate(reg, used):
     variants = {v: s for v, s in CHAINS}
     version_chain = {v: CHAINS[i][0] for i, v in enumerate(VERSIONS)}
     chain_of_version = {c: v for v, c in version_chain.items()}
@@ -272,7 +369,7 @@ def generate(reg):
     w("")
     w("use std::ffi::CStr;")
     w("")
-    w("use super::{Field, Version, e, f};")
+    w("use super::{Depends, Field, Version, e, f};")
     w("use crate::vulkan::ApiVersion;")
     w("")
     w("/// A feature struct that goes into a `pNext` chain.")
@@ -409,6 +506,32 @@ def generate(reg):
             w(f'    c"{name}",')
         w("];")
 
+    # The dependencies of every extension the hand-written code names, and
+    # of theirs.
+    todo, seen = sorted(used), set()
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        dep = reg.extensions[name]["depends"]
+        if dep:
+            todo.extend(n for n in depends_names(parse_depends(dep)) if n not in seen)
+    w("")
+    w("/// The `depends` expression of every extension the routes name, and of")
+    w("/// their dependencies, as `vk.xml` states it.")
+    w("pub(super) const DEPENDS: &[(&CStr, Depends)] = &[")
+    for name in sorted(seen):
+        dep = reg.extensions[name]["depends"]
+        w(f'    (c"{name}", {depends_rust(parse_depends(dep)) if dep else "Depends::All(&[])"}),')
+    w("];")
+    w("")
+    w("/// `sType` values of the property structs the probe reads.")
+    w("pub(crate) mod s_type {")
+    for const, struct in PROPERTIES:
+        w(f"    /// `{struct}`.")
+        w(f"    pub const {const}: i32 = {reg.s_type(struct):_};")
+    w("}")
     w("")
     w("/// Every instance extension: enabled at `vkCreateInstance`, never at")
     w("/// `vkCreateDevice`.")
@@ -434,8 +557,8 @@ def rustfmt(source):
 
 
 def check_names(reg):
-    """Every extension name the hand-written code spells must exist."""
-    bad = []
+    """Every extension name the hand-written code spells must exist; returns them."""
+    bad, used = [], set()
     for path in sorted(SCAN.rglob("*.rs")):
         if path == OUT:
             continue
@@ -443,8 +566,11 @@ def check_names(reg):
             for name in re.findall(r'c"(VK_[A-Za-z0-9_]+)"', line):
                 if name not in reg.extensions:
                     bad.append(f"{path.relative_to(ROOT)}:{n}: unknown extension {name}")
+                else:
+                    used.add(name)
     if bad:
         fail("\n".join(bad))
+    return used
 
 
 def main():
@@ -453,8 +579,8 @@ def main():
     ap.add_argument("--check", action="store_true", help="fail if the file is out of date")
     args = ap.parse_args()
     reg = Registry(args.vk_xml)
-    check_names(reg)
-    source = rustfmt(generate(reg))
+    used = check_names(reg)
+    source = rustfmt(generate(reg, used))
     if args.check:
         current = OUT.read_text(encoding="utf-8") if OUT.exists() else ""
         if current != source:

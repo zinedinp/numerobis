@@ -110,42 +110,54 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
 
 - `vulkan::features`: per core version (1.0 to 1.4) its feature bits in
   declaration order, the struct that holds them, the extension each bit came
-  from, the extensions the version promoted, and which single struct a
-  version struct absorbed when. Generated from `vk.xml` (see below).
-- `vulkan::caps`: the `Capability`s, one module per area (`draw`, `memory`,
-  `shader`, `descriptor`, `sync`, `render`). Each has its routes in fallback
-  order: newest core version first, then the extensions that offered it
-  before. Examples: `draw_indirect_count` is core 1.2 or
-  `VK_KHR_draw_indirect_count`, `buffer_device_address` is core 1.2 or
-  `VK_KHR_buffer_device_address`, `mesh_shader` is `VK_EXT_mesh_shader`
-  (with its 1.2 dependencies as extensions on 1.1). A route naming a member
-  its struct doesn't have fails to compile.
+  from, the extensions the version promoted, which single struct a version
+  struct absorbed when, and every extension's `depends` expression. Generated
+  from `vk.xml` (see below).
+- `vulkan::caps`: 72 `Capability`s, one module per area: `draw`, `memory`,
+  `shader`, `compute` (cooperative matrix, bfloat16, float8, memory model),
+  `descriptor`, `pipeline` (dynamic state, pipeline libraries, shader
+  objects, maintenance4-6), `sync`, `render` (texture compression, debug
+  raster), `present` (present id/wait), `interop` (fd, dma-buf and DRM
+  modifiers on Linux; Win32 handles on Windows). Each has its routes in
+  fallback order: newest core version first, then the extensions that
+  offered it before, and may `need` others (`shader_object` needs
+  `dynamic_rendering`). A route naming a member its struct doesn't have
+  fails to compile.
 - `Instance`: what `vkCreateInstance` needs: the `apiVersion`,
   `VK_KHR_portability_enumeration` and its flag (MoltenVK and other
-  portability drivers stay hidden without), and
-  `VK_KHR_get_physical_device_properties2` on a 1.0 loader.
-- `Probe` / `Plan`: the waterfall.
+  portability drivers stay hidden without), and on a 1.0 loader
+  `VK_KHR_get_physical_device_properties2` and the other instance extensions
+  1.1 made core.
+- `Probe` / `Plan`: the waterfall. `vulkan::device` adds the device's
+  identity (tied to `pci`: vendor, architecture, driver version), driver
+  `Quirk`s and `rank` to pick among several devices; `vulkan::memory` the
+  heaps, VRAM and how much of it the CPU can map.
 
 ```rust
-use numerobis::vulkan::{ApiVersion, Capability as Cap, Chain, Instance, Offer, Probe};
+use numerobis::vulkan::{ApiVersion, Capability as Cap, Chain, Instance, Offer, Probe, rank};
 
 // 1. vkCreateInstance with instance.api.raw(), instance.flags and
 //    instance.extensions() plus the host's own. `loader_version` is `None`
 //    when the loader has no vkEnumerateInstanceVersion (1.0).
 let instance = Instance::new(loader_version, ApiVersion::NEWEST, instance_extension_names);
-// 2. The picked device: its apiVersion and vkEnumerateDeviceExtensionProperties.
+// 2. Per physical device: its apiVersion and vkEnumerateDeviceExtensionProperties.
 let device = ApiVersion::from_raw(props.api_version).expect("not Vulkan SC");
 let offer = Offer::new(instance.api, device, extension_names)
     .with_instance(instance.extensions().iter().copied());
 let mut probe = Probe::new(offer, &[Cap::DynamicRendering, Cap::Synchronization2, Cap::MeshShader]);
-// 3. One feature query; `features2()` is a ready VkPhysicalDeviceFeatures2
-//    chain (`probe.query()` says which entry point). Subgroup capabilities
-//    also want `properties2()` through vkGetPhysicalDeviceProperties2.
-unsafe { get_physical_device_features2(physical, probe.features2().cast()) };
+// 3. The queries (`probe.query()` says core or KHR entry points):
+//    features2 for the bits, properties2 for subgroups, driver and PCI
+//    address, memory_properties2 for heaps and budget.
+unsafe {
+    get_physical_device_features2(physical, probe.features2().cast());
+    get_physical_device_properties2(physical, probe.properties2().cast());
+    get_physical_device_memory_properties2(physical, probe.memory_properties2().cast());
+}
 let plan = probe.plan();
 log::info!("{plan}");
-assert!(plan.lacking(&[Cap::DynamicRendering, Cap::Synchronization2]).is_empty());
-// 4. vkCreateDevice: pNext = chain.features2(), plus plan.extensions().
+// 4. With several devices: the best one that has everything required.
+let best = rank(&plans, &[Cap::DynamicRendering, Cap::Synchronization2]).first().copied();
+// 5. vkCreateDevice: pNext = chain.features2(), plus plan.extensions().
 let mut chain = plan.device_chain();
 if plan.supported(Chain::Core10, "fillModeNonSolid") == Some(true) {
     chain.enable(Chain::Core10, "fillModeNonSolid")?; // bits no capability covers
@@ -156,27 +168,45 @@ The device works at the lower of the instance's `apiVersion` and its own
 version. On that version the first available route decides; if its bit is
 off, the capability is missing. Later routes would read the same hardware
 bit through another struct, and chaining a `VkPhysicalDeviceVulkan1xFeatures`
-together with a single struct it absorbed is invalid. Bits the host adds go
-through `Probe::also_query` / `Plan::supported` / `DeviceChain::enable`,
-which move a single struct into its version struct for the same reason.
-`Plan::route` tells the host whether a core or an extension entry point
-applies (core `vkCmdDrawIndexedIndirectCount` vs. its `KHR` twin). A device
-that offers `VK_KHR_portability_subset` gets it enabled, and the log names
-what the subset leaves out. The log has one line per capability:
+together with a single struct it absorbed is invalid. An extension route is
+available when the extension and its `vk.xml` dependencies are met (core,
+offered, or enabled on the instance), and `Plan::extensions` lists exactly
+the device extensions that takes, `VK_KHR_swapchain` included for the
+present capabilities. Bits the host adds go through `Probe::also_query` /
+`Plan::supported` / `DeviceChain::enable`, which move a single struct into
+its version struct for the same reason. `Plan::route` tells the host
+whether a core or an extension entry point applies (core
+`vkCmdDrawIndexedIndirectCount` vs. its `KHR` twin). A device that offers
+`VK_KHR_portability_subset` gets it enabled, and the log names what the
+subset leaves out. The log has one line per capability, and marks what was
+never run on this OS:
 
 ```text
-Vulkan 1.1 (instance asks 1.1, device has 1.3)
-  + draw.draw_indirect_count: VK_KHR_draw_indirect_count [skipped core 1.2 (VkPhysicalDeviceVulkan12Features.drawIndirectCount): needs 1.2]
-  - shader.float16: no route [skipped core 1.2 (...): needs 1.2; VK_KHR_shader_float16_int8 (...): not offered]
-  extensions: VK_KHR_draw_indirect_count
+Vulkan 1.4 (instance asks 1.4, device has 1.4.359)
+  device: Intel(R) Arc(TM) B580 Graphics, discrete, Intel Xe2-HPG [8086:e20b], driver 101.9175 (Intel Corporation)
+  memory: 11.83 GiB VRAM, all CPU-visible, 15.97 GiB host
+  + draw.draw_indirect_count: core 1.2 (VkPhysicalDeviceVulkan12Features.drawIndirectCount)
+  - compute.float8: no route [skipped VK_EXT_shader_float8 (...): not offered]
+  - interop.dma_buf: not on Windows
+  + interop.external_memory_win32: VK_KHR_external_memory_win32
+  extensions: VK_EXT_mesh_shader, VK_EXT_memory_priority, ...
 ```
+
+`cargo run --example vulkan_probe` runs all of it against the installed
+driver: every capability, the queries, `vkCreateDevice` with the plan's
+chain and extensions under the validation layer (when installed), and the
+memory next to `pci::bar`. It fails on any validation error.
+`NUMEROBIS_VK_API=1.1` caps the instance version, so the extension routes
+and their dependencies are the ones exercised.
 
 ### Regenerating the tables
 
 `src/vulkan/features/generated.rs` comes from the Vulkan registry
 (`xml/vk.xml` of [Vulkan-Docs](https://github.com/KhronosGroup/Vulkan-Docs),
-or `registry/vk.xml` of Vulkan-Headers); its header records the version.
-To add a struct, list it in `CHAINS` in the script.
+`registry/vk.xml` of Vulkan-Headers, or `share/vulkan/registry/vk.xml` of
+the Vulkan SDK); its header records the version. To add a struct, list it in
+`CHAINS` in the script; the dependencies of every extension a route names
+are picked up by themselves.
 
 ```sh
 python scripts/gen-vulkan.py path/to/vk.xml          # write
@@ -185,6 +215,55 @@ python scripts/gen-vulkan.py path/to/vk.xml --check  # fail if out of date
 
 The script also fails on any `c"VK_..."` name under `src/vulkan` that the
 registry doesn't know.
+
+## PCI BARs and resizable BAR (`numerobis::pci::bar`)
+
+`pci::bar::scan()` lists every display-class PCI device from the OS, without
+a driver API: whether the card can do resizable BAR, how wide and fast its
+PCIe link is, and how much VRAM the CPU can map through the aperture BAR and
+whether that BAR lies above 4 GiB ("Above 4G Decoding"). Linux reads sysfs
+(`resource`, `resource<N>_resize`, `*_link_*`); Windows the configuration
+manager (`cfgmgr32`: the assigned memory ranges, `DEVPKEY_PciDevice_*Link*`)
+and the display driver's registry key for the VRAM size.
+`vulkan::Memory::cpu_visible_vram` tells the same from Vulkan's side.
+
+```text
+$ cargo run --example bars
+Intel(R) Arc(TM) B580 Graphics [8086:e20b] Intel Xe2-HPG at 0000:03:00.0
+  link: behind the on-board switch, not reported by the OS (GPU-internal PCIe 1.0 x1 (0.25 GB/s))
+  VRAM 12 GiB, CPU-visible 16 GiB at 0x2800000000 (above 4 GiB)
+  resizable BAR: active
+```
+
+Cards with a PCIe switch on board (Intel Arc, recent AMD) show a narrow
+internal link on the GPU itself; `Gpu::link` is the switch's upstream link,
+the one in the slot. Linux reports it; Windows reports links on endpoints
+only, so there it stays unknown. Whether a card is resizable-BAR capable but
+has it turned off is known on Linux (`ResizableBar::Inactive`); Windows only
+shows the aperture size.
+
+## Platforms
+
+What depends on the OS says per OS whether it was run there against real
+hardware (`numerobis::platform::Support`): `Tested`, `Untested` (compiled
+and unit-tested only) or `Unavailable`. The plan log marks a granted
+capability that is untested on its OS with `(untested on Linux)`.
+
+| Part | Linux | Windows |
+|---|---|---|
+| raw NVIDIA backend | tested (RTX 3080) | unavailable |
+| raw Tenstorrent backend | kernel code under qemu, on-card pending | unavailable |
+| `dmabuf`, `sync` | Linux only | unavailable |
+| `pci` tables, `vulkan` tables and waterfall | unit-tested | unit-tested |
+| Vulkan capabilities on a real driver | untested | 56 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
+| `vulkan::interop` fd / dma-buf / DRM modifiers | untested | unavailable |
+| `vulkan::interop` Win32 handles | unavailable | tested |
+| `pci::bar` | untested (parsers unit-tested) | tested (Intel Arc B580) |
+| `examples/vulkan_probe` loader | untested (`libvulkan.so.1`) | tested (`vulkan-1.dll`) |
+
+`Capability::spec().support` has the per-capability flag; on Windows the
+capabilities the B580 doesn't have (bfloat16, float8, shader objects, ASTC,
+the present extensions) stay untested.
 
 ## Usage
 
@@ -285,6 +364,20 @@ The suite runs every op on every target and compares with the mock reference:
 `tests/softfloat.rs` checks the soft-float against the host FPU on a million
 random cases including subnormals and specials. `tests/binaries.rs` checks
 that the checked-in kernel binaries export every kernel and need no linking.
+
+The `host-cl` tests build a small driver with `clang`; without `clang` on the
+`PATH` they fail with "cannot run clang". Against real drivers, without a
+backend feature:
+
+```sh
+cargo run --example vulkan_probe    # every capability, vkCreateDevice under validation
+NUMEROBIS_VK_API=1.0 cargo run --example vulkan_probe   # the extension routes instead
+cargo run --example bars            # PCIe link, BAR aperture, resizable BAR
+```
+
+Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
+`reason`. The Linux-only code is checked from any host with
+`cargo clippy --target x86_64-unknown-linux-gnu --features nvidia,tt --all-targets`.
 
 ## Planned
 

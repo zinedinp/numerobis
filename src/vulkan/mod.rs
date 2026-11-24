@@ -43,11 +43,16 @@ use std::ffi::CStr;
 use std::fmt;
 
 pub mod caps;
+pub mod device;
 pub mod features;
+pub mod memory;
 mod plan;
 
+pub use crate::platform::{Os, Status, Support};
 pub use caps::{Area, Capability, Route};
+pub use device::{DeviceInfo, DeviceType, Quirk, rank};
 pub use features::Chain;
+pub use memory::Memory;
 pub use plan::{BitError, DeviceChain, FeatureQuery, Offer, Outcome, Plan, Probe, Skip, Verdict};
 
 /// A Vulkan version (`VK_MAKE_API_VERSION` without the variant).
@@ -140,7 +145,8 @@ impl Instance {
     /// `vkEnumerateInstanceExtensionProperties` lists.
     ///
     /// - On a 1.0 loader, `VK_KHR_get_physical_device_properties2`, which
-    ///   opens the feature structs ([`FeatureQuery::Features2Khr`]).
+    ///   opens the feature structs ([`FeatureQuery::Features2Khr`]), and the
+    ///   other instance extensions 1.1 made core.
     /// - `VK_KHR_portability_enumeration` with its create flag, without
     ///   which a newer loader hides `MoltenVK` and other portability drivers.
     pub fn new<'a>(
@@ -152,9 +158,21 @@ impl Instance {
         let available: Vec<&CStr> = available.into_iter().collect();
         let mut extensions = Vec::new();
         let mut flags = 0;
-        if api < ApiVersion::V1_1 && available.contains(&features::GET_PHYSICAL_DEVICE_PROPERTIES2)
-        {
-            extensions.push(features::GET_PHYSICAL_DEVICE_PROPERTIES2);
+        if api < ApiVersion::V1_1 {
+            // What 1.1 made core on the instance side, which device
+            // extensions build on (`VK_KHR_device_group` on
+            // `VK_KHR_device_group_creation`, ...).
+            for name in [
+                features::GET_PHYSICAL_DEVICE_PROPERTIES2,
+                c"VK_KHR_device_group_creation",
+                c"VK_KHR_external_memory_capabilities",
+                c"VK_KHR_external_semaphore_capabilities",
+                c"VK_KHR_external_fence_capabilities",
+            ] {
+                if available.contains(&name) {
+                    extensions.push(name);
+                }
+            }
         }
         if available.contains(&features::PORTABILITY_ENUMERATION) {
             extensions.push(features::PORTABILITY_ENUMERATION);

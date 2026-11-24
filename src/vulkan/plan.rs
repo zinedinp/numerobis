@@ -15,8 +15,11 @@ use std::fmt;
 
 use super::ApiVersion;
 use super::caps::{Capability, Route};
-use super::features::{self, Chain};
+use super::device::{self, DeviceInfo, PropertiesQuery, PropertyChain, Quirk};
+use super::features::{self, Chain, Depends};
+use super::memory::{Memory, MemoryQuery};
 use super::subgroup::Subgroup;
+use crate::platform::{Os, Status};
 
 /// Room for the largest struct (`VkPhysicalDeviceFeatures`, 55 bits).
 pub(crate) const BITS: usize = 64;
@@ -172,6 +175,9 @@ pub struct Offer {
     pub device: ApiVersion,
     extensions: Vec<CString>,
     instance: Vec<CString>,
+    /// The OS the plan is for: capabilities unavailable there are skipped.
+    pub os: Os,
+    device_info: Option<DeviceInfo>,
 }
 
 impl Offer {
@@ -186,7 +192,25 @@ impl Offer {
             device,
             extensions: extensions.into_iter().map(CStr::to_owned).collect(),
             instance: Vec::new(),
+            os: Os::HOST,
+            device_info: None,
         }
+    }
+
+    /// Plans for another OS than the one this was built for.
+    #[must_use]
+    pub fn with_os(mut self, os: Os) -> Self {
+        self.os = os;
+        self
+    }
+
+    /// The device's identity, for hosts that read `VkPhysicalDeviceProperties`
+    /// themselves ([`DeviceInfo::from_properties`]); otherwise
+    /// [`Probe::properties2`] provides it.
+    #[must_use]
+    pub fn with_device(mut self, info: DeviceInfo) -> Self {
+        self.device_info = Some(info);
+        self
     }
 
     /// The instance extensions that were enabled at `vkCreateInstance`
@@ -233,30 +257,73 @@ impl Offer {
         features::promoted_in(name).is_some_and(|v| v <= self.api())
     }
 
-    /// Whether dependency `name` is met: core, enabled on the instance, or
-    /// offered by the device.
-    fn has_dependency(&self, name: &CStr) -> bool {
+    /// What keeps extension `name` from being enabled, if anything: it is
+    /// usable when core at [`api`](Self::api), enabled on the instance
+    /// (instance extensions), or offered with its `vk.xml` dependencies met.
+    fn missing_for(&self, name: &'static CStr) -> Option<Skip> {
         if self.is_core(name) {
-            return true;
+            return None;
         }
         if features::is_instance_extension(name) {
-            self.instance_has(name)
-        } else {
-            self.offers(name)
+            return (!self.instance_has(name)).then_some(Skip::Dependency(name));
+        }
+        if !self.offers(name) {
+            return Some(Skip::Dependency(name));
+        }
+        features::depends(name).and_then(|d| self.missing(d))
+    }
+
+    /// The first unmet part of `dep`; for alternatives, the first one's.
+    fn missing(&self, dep: &'static Depends) -> Option<Skip> {
+        match *dep {
+            Depends::Version(v) => (self.api() < v).then_some(Skip::Version(v)),
+            Depends::Extension(name) => self.missing_for(name),
+            Depends::All(all) => all.iter().find_map(|d| self.missing(d)),
+            Depends::Any(any) => {
+                // Met when one is; else the first one's reason.
+                let skips: Option<Vec<Skip>> = any.iter().map(|d| self.missing(d)).collect();
+                skips.and_then(|s| s.first().copied())
+            }
+            Depends::Never => Some(Skip::Version(ApiVersion::new(u32::MAX, 0))),
+        }
+    }
+
+    /// Adds `name` and the device extensions its met dependencies take (for
+    /// alternatives the first that is met) to `out`.
+    fn enable(&self, name: &'static CStr, out: &mut Vec<&'static CStr>) {
+        if self.is_core(name) || features::is_instance_extension(name) || out.contains(&name) {
+            return;
+        }
+        out.push(name);
+        if let Some(dep) = features::depends(name) {
+            self.enable_dep(dep, out);
+        }
+    }
+
+    fn enable_dep(&self, dep: &'static Depends, out: &mut Vec<&'static CStr>) {
+        match *dep {
+            Depends::Version(_) | Depends::Never => {}
+            Depends::Extension(name) => self.enable(name, out),
+            Depends::All(all) => all.iter().for_each(|d| self.enable_dep(d, out)),
+            Depends::Any(any) => {
+                if let Some(met) = any.iter().find(|d| self.missing(d).is_none()) {
+                    self.enable_dep(met, out);
+                }
+            }
         }
     }
 
     fn check(&self, route: &Route) -> Result<(), Skip> {
         let api = self.api();
         match *route {
-            Route::Core { since, .. } | Route::Subgroup { since, .. } => {
+            Route::Core { since, .. }
+            | Route::Version { since }
+            | Route::Subgroup { since, .. } => {
                 if api < since {
                     return Err(Skip::Version(since));
                 }
             }
-            Route::Extension {
-                name, deps, chain, ..
-            } => {
+            Route::Extension { name, chain, .. } => {
                 if let Some(core) = features::promoted_in(name).filter(|&v| v <= api) {
                     return Err(Skip::Promoted(core));
                 }
@@ -267,8 +334,8 @@ impl Offer {
                 if chain.is_some() && !self.query().has_chain() {
                     return Err(Skip::Dependency(features::GET_PHYSICAL_DEVICE_PROPERTIES2));
                 }
-                if let Some(&dep) = deps.iter().find(|&&dep| !self.has_dependency(dep)) {
-                    return Err(Skip::Dependency(dep));
+                if let Some(skip) = features::depends(name).and_then(|d| self.missing(d)) {
+                    return Err(skip);
                 }
             }
         }
@@ -308,6 +375,12 @@ pub enum Verdict {
     SubgroupUnread,
     /// No route was available.
     NoRoute,
+    /// The capability does not exist on this OS (Win32 handles on Linux, ...).
+    Unavailable(Os),
+    /// Granted, but a capability it needs is not.
+    Needs(Capability),
+    /// Granted, but a [`Quirk`] for this device turns it off.
+    Quirk(&'static str),
 }
 
 /// One capability's result.
@@ -319,6 +392,11 @@ pub struct Outcome {
     pub verdict: Verdict,
     /// The routes passed over before it, and why.
     pub skipped: Vec<(&'static Route, Skip)>,
+    /// Asked for only because another capability [needs](crate::vulkan::caps::Spec::needs) it.
+    pub implied: bool,
+    /// The OS of the plan, when the capability was never run on it
+    /// ([`Status::Untested`]).
+    pub untested_on: Option<Os>,
 }
 
 impl Outcome {
@@ -330,39 +408,10 @@ impl Outcome {
 
 struct Pick {
     cap: Capability,
+    implied: bool,
     route: Option<&'static Route>,
     skipped: Vec<(&'static Route, Skip)>,
 }
-
-/// `VkPhysicalDeviceSubgroupProperties`.
-#[repr(C)]
-struct SubgroupProperties {
-    s_type: i32,
-    p_next: *mut c_void,
-    size: u32,
-    stages: u32,
-    operations: u32,
-    quad_operations_in_all_stages: u32,
-}
-
-/// `VkPhysicalDeviceProperties2`, with room to spare for the 824 bytes of
-/// `VkPhysicalDeviceProperties` (drivers write only their struct's size).
-#[repr(C)]
-struct Properties2 {
-    s_type: i32,
-    p_next: *mut c_void,
-    properties: [u64; 128],
-}
-
-/// The properties query, boxed so the chain's addresses stay put.
-#[repr(C)]
-struct PropertiesQuery {
-    head: Properties2,
-    subgroup: SubgroupProperties,
-}
-
-const PROPERTIES2_S_TYPE: i32 = 1_000_059_001;
-const SUBGROUP_PROPERTIES_S_TYPE: i32 = 1_000_094_000;
 
 /// Step 1: the routes picked from versions and extensions, and the feature
 /// query they need.
@@ -372,22 +421,43 @@ pub struct Probe {
     query: Blocks,
     subgroup: Option<Subgroup>,
     properties: Option<Box<PropertiesQuery>>,
+    memory: Option<Box<MemoryQuery>>,
+    quirks: Vec<Quirk>,
 }
 
 impl Probe {
-    /// Picks a route for each of `caps` (duplicates count once).
+    /// Picks a route for each of `caps` (duplicates count once), and for
+    /// every capability they [need](crate::vulkan::caps::Spec::needs).
+    /// Capabilities unavailable on [`Offer::os`] get no route.
     pub fn new(offer: Offer, caps: &[Capability]) -> Self {
+        let mut wanted: Vec<(Capability, bool)> = Vec::new();
+        for &cap in caps {
+            if !wanted.iter().any(|&(c, _)| c == cap) {
+                wanted.push((cap, false));
+            }
+        }
+        let mut i = 0;
+        while i < wanted.len() {
+            for &need in wanted[i].0.spec().needs {
+                if !wanted.iter().any(|&(c, _)| c == need) {
+                    wanted.push((need, true));
+                }
+            }
+            i += 1;
+        }
         let mut query = Blocks::new();
         let mut picks: Vec<Pick> = Vec::new();
-        for &cap in caps {
-            if picks.iter().any(|p| p.cap == cap) {
-                continue;
-            }
+        for (cap, implied) in wanted {
             let mut pick = Pick {
                 cap,
+                implied,
                 route: None,
                 skipped: Vec::new(),
             };
+            if !cap.spec().support.available_on(offer.os) {
+                picks.push(pick);
+                continue;
+            }
             for route in cap.spec().routes {
                 match offer.check(route) {
                     Ok(()) => {
@@ -411,7 +481,16 @@ impl Probe {
             query,
             subgroup: None,
             properties: None,
+            memory: None,
+            quirks: Vec::new(),
         }
+    }
+
+    /// Driver problems to respect (see [`Quirk`]).
+    #[must_use]
+    pub fn with_quirks(mut self, quirks: &[Quirk]) -> Self {
+        self.quirks.extend_from_slice(quirks);
+        self
     }
 
     /// How to read the features: which entry point gets
@@ -457,30 +536,42 @@ impl Probe {
     }
 
     /// A `VkPhysicalDeviceProperties2*` for `vkGetPhysicalDeviceProperties2`
-    /// (API 1.1 and up), with `VkPhysicalDeviceSubgroupProperties` behind it.
-    /// [`plan`](Self::plan) reads the subgroup properties from it, so
-    /// [`set_subgroup`](Self::set_subgroup) is not needed. Valid until the
-    /// probe is used again or dropped.
+    /// (or its `KHR` twin, as [`query`](Self::query) says). Behind it, where
+    /// the device has them: `VkPhysicalDeviceSubgroupProperties` (1.1),
+    /// `VkPhysicalDeviceDriverProperties` (1.2 or `VK_KHR_driver_properties`)
+    /// and `VkPhysicalDevicePCIBusInfoPropertiesEXT`. [`plan`](Self::plan)
+    /// reads the subgroup properties and the [`DeviceInfo`] from it. Valid
+    /// until the probe is used again or dropped.
     pub fn properties2(&mut self) -> *mut c_void {
-        let props = self.properties.get_or_insert_with(|| {
-            Box::new(PropertiesQuery {
-                head: Properties2 {
-                    s_type: PROPERTIES2_S_TYPE,
-                    p_next: std::ptr::null_mut(),
-                    properties: [0; 128],
-                },
-                subgroup: SubgroupProperties {
-                    s_type: SUBGROUP_PROPERTIES_S_TYPE,
-                    p_next: std::ptr::null_mut(),
-                    size: 0,
-                    stages: 0,
-                    operations: 0,
-                    quad_operations_in_all_stages: 0,
-                },
-            })
-        });
-        props.head.p_next = std::ptr::from_mut(&mut props.subgroup).cast();
-        std::ptr::from_mut(&mut props.head).cast()
+        let api = self.offer.api();
+        let chain = PropertyChain {
+            subgroup: api >= ApiVersion::V1_1,
+            driver: api >= ApiVersion::V1_2 || self.offer.offers(device::DRIVER_PROPERTIES),
+            pci: self.offer.offers(device::PCI_BUS_INFO),
+        };
+        self.properties
+            .get_or_insert_with(PropertiesQuery::new)
+            .link(chain)
+    }
+
+    /// A `VkPhysicalDeviceMemoryProperties2*` for
+    /// `vkGetPhysicalDeviceMemoryProperties2`, with
+    /// `VkPhysicalDeviceMemoryBudgetPropertiesEXT` behind it when the device
+    /// offers `VK_EXT_memory_budget`. [`Plan::memory`] reads it. Valid until
+    /// the probe is used again or dropped.
+    pub fn memory_properties2(&mut self) -> *mut c_void {
+        let budget = self.offer.offers(c"VK_EXT_memory_budget");
+        self.memory
+            .get_or_insert_with(MemoryQuery::new)
+            .properties2(budget)
+    }
+
+    /// The `VkPhysicalDeviceMemoryProperties*` inside it, for
+    /// `vkGetPhysicalDeviceMemoryProperties` on a 1.0 device.
+    pub fn memory_properties(&mut self) -> *mut c_void {
+        self.memory
+            .get_or_insert_with(MemoryQuery::new)
+            .properties()
     }
 
     /// The subgroup properties, when the host read them itself.
@@ -488,47 +579,82 @@ impl Probe {
         self.subgroup = Some(subgroup);
     }
 
-    /// What [`properties2`](Self::properties2) brought back. `subgroupSize`
-    /// is at least 1 on every device, so 0 means the query never ran.
+    /// What [`properties2`](Self::properties2) brought back, unless the host
+    /// set the subgroup properties itself.
     fn subgroup(&self) -> Option<Subgroup> {
-        self.subgroup.or_else(|| {
-            let s = &self.properties.as_ref()?.subgroup;
-            (s.size != 0).then_some(Subgroup {
-                size: s.size,
-                stages: s.stages,
-                operations: s.operations,
+        self.subgroup
+            .or_else(|| self.properties.as_ref()?.subgroup())
+    }
+
+    /// Each pick's verdict from the bits and properties read, then the
+    /// quirks.
+    fn verdicts(
+        &self,
+        picks: &[Pick],
+        supported: &[(Chain, u64)],
+        subgroup: Option<Subgroup>,
+        device: Option<&DeviceInfo>,
+    ) -> Vec<Verdict> {
+        let os = self.offer.os;
+        picks
+            .iter()
+            .map(|pick| {
+                if !pick.cap.spec().support.available_on(os) {
+                    return Verdict::Unavailable(os);
+                }
+                let verdict = pick
+                    .route
+                    .map_or(Verdict::NoRoute, |r| verdict(r, supported, subgroup));
+                match self
+                    .quirks
+                    .iter()
+                    .find(|q| q.capability == pick.cap && q.applies(device, os))
+                {
+                    Some(q) if verdict == Verdict::Granted => Verdict::Quirk(q.reason),
+                    _ => verdict,
+                }
             })
-        })
+            .collect()
     }
 
     /// Step 2, after the query was filled: what each capability gets.
     #[must_use]
     pub fn plan(mut self) -> Plan {
         let query = self.query();
+        let os = self.offer.os;
         let subgroup = self.subgroup();
         let supported = self.query.masks();
+        let device = self
+            .offer
+            .device_info
+            .clone()
+            .or_else(|| self.properties.as_ref()?.device());
+        let memory = self.memory.as_ref().and_then(|m| m.read());
+        let picks = std::mem::take(&mut self.picks);
+        let mut verdicts = self.verdicts(&picks, &supported, subgroup, device.as_ref());
+        resolve_needs(&picks, &mut verdicts);
         let mut outcomes = Vec::new();
         let mut extensions: Vec<&'static CStr> = Vec::new();
-        if self.offer.portability() {
-            extensions.push(features::PORTABILITY_SUBSET_EXTENSION);
-        }
+        // Offered means it must be enabled (VUID-VkDeviceCreateInfo-pProperties-04451),
+        // which takes its own dependencies; without them the host has to
+        // fix the instance first, and the log says how.
+        let portability_blocked = if self.offer.portability() {
+            let blocked = self
+                .offer
+                .missing_for(features::PORTABILITY_SUBSET_EXTENSION);
+            if blocked.is_none() {
+                self.offer
+                    .enable(features::PORTABILITY_SUBSET_EXTENSION, &mut extensions);
+            }
+            blocked
+        } else {
+            None
+        };
         let mut enabled = Vec::new();
-        let picks = std::mem::take(&mut self.picks);
-        for pick in picks {
-            let verdict = match pick.route {
-                None => Verdict::NoRoute,
-                Some(route) => verdict(route, &supported, subgroup),
-            };
+        for (pick, verdict) in picks.into_iter().zip(verdicts) {
             if let (Verdict::Granted, Some(route)) = (verdict, pick.route) {
-                if let Route::Extension { name, deps, .. } = *route {
-                    let wanted = std::iter::once(name).chain(deps.iter().copied().filter(|&d| {
-                        !self.offer.is_core(d) && !features::is_instance_extension(d)
-                    }));
-                    for name in wanted {
-                        if !extensions.contains(&name) {
-                            extensions.push(name);
-                        }
-                    }
+                if let Route::Extension { name, .. } = *route {
+                    self.offer.enable(name, &mut extensions);
                 }
                 if let Some(chain) = route_chain(route) {
                     // Every route field is a member of its chain: the route
@@ -540,11 +666,14 @@ impl Probe {
                     }
                 }
             }
+            let untested = pick.cap.spec().support.on(os) == Status::Untested;
             outcomes.push(Outcome {
                 cap: pick.cap,
                 route: pick.route,
                 verdict,
                 skipped: pick.skipped,
+                implied: pick.implied,
+                untested_on: untested.then_some(os),
             });
         }
         Plan {
@@ -552,12 +681,42 @@ impl Probe {
             device: self.offer.device,
             api: self.offer.api(),
             query,
+            os,
             outcomes,
             extensions,
             enabled,
             supported,
             subgroup,
             portability: self.offer.portability(),
+            portability_blocked,
+            device_info: device,
+            memory,
+        }
+    }
+}
+
+/// A granted capability whose needs are not granted falls too, until nothing
+/// changes.
+fn resolve_needs(picks: &[Pick], verdicts: &mut [Verdict]) {
+    loop {
+        let granted: Vec<Capability> = picks
+            .iter()
+            .zip(verdicts.iter())
+            .filter(|&(_, v)| *v == Verdict::Granted)
+            .map(|(p, _)| p.cap)
+            .collect();
+        let mut changed = false;
+        for (pick, verdict) in picks.iter().zip(verdicts.iter_mut()) {
+            if *verdict != Verdict::Granted {
+                continue;
+            }
+            if let Some(&need) = pick.cap.spec().needs.iter().find(|n| !granted.contains(n)) {
+                *verdict = Verdict::Needs(need);
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
         }
     }
 }
@@ -599,14 +758,14 @@ fn route_chain(route: &Route) -> Option<Chain> {
     match *route {
         Route::Core { chain, .. } => Some(chain),
         Route::Extension { chain, .. } => chain,
-        Route::Subgroup { .. } => None,
+        Route::Version { .. } | Route::Subgroup { .. } => None,
     }
 }
 
 fn route_fields(route: &Route) -> &'static [&'static str] {
     match *route {
         Route::Core { fields, .. } | Route::Extension { fields, .. } => fields,
-        Route::Subgroup { .. } => &[],
+        Route::Version { .. } | Route::Subgroup { .. } => &[],
     }
 }
 
@@ -620,6 +779,8 @@ pub struct Plan {
     pub api: ApiVersion,
     /// How the features are passed to `vkCreateDevice`.
     pub query: FeatureQuery,
+    /// The OS it was planned for.
+    pub os: Os,
     outcomes: Vec<Outcome>,
     extensions: Vec<&'static CStr>,
     enabled: Vec<(Chain, usize)>,
@@ -627,9 +788,26 @@ pub struct Plan {
     supported: Vec<(Chain, u64)>,
     subgroup: Option<Subgroup>,
     portability: bool,
+    /// Why `VK_KHR_portability_subset` could not be enabled, if it couldn't.
+    portability_blocked: Option<Skip>,
+    device_info: Option<DeviceInfo>,
+    memory: Option<Memory>,
 }
 
 impl Plan {
+    /// The device's identity, from [`Probe::properties2`] or
+    /// [`Offer::with_device`].
+    #[must_use]
+    pub fn device_info(&self) -> Option<&DeviceInfo> {
+        self.device_info.as_ref()
+    }
+
+    /// Heaps and types, from [`Probe::memory_properties2`].
+    #[must_use]
+    pub fn memory(&self) -> Option<&Memory> {
+        self.memory.as_ref()
+    }
+
     #[must_use]
     pub fn has(&self, cap: Capability) -> bool {
         self.outcome(cap).is_some_and(Outcome::granted)
@@ -803,6 +981,7 @@ impl fmt::Display for ShowRoute<'_> {
                 fields.join("+")
             ),
             Route::Extension { name, .. } => write!(f, "{}", name.to_string_lossy()),
+            Route::Version { since } => write!(f, "core {since}"),
             Route::Subgroup {
                 since,
                 operations,
@@ -818,6 +997,7 @@ impl fmt::Display for ShowRoute<'_> {
 impl fmt::Display for Skip {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
+            Self::Version(v) if v.major == u32::MAX => write!(f, "Vulkan SC only"),
             Self::Version(v) => write!(f, "needs {v}"),
             Self::Promoted(v) => write!(f, "core since {v}"),
             Self::NotOffered(_) => write!(f, "not offered"),
@@ -842,6 +1022,13 @@ impl fmt::Display for Outcome {
             (Some(route), Verdict::SubgroupUnread) => {
                 write!(f, "subgroup properties not read ({})", ShowRoute(route))?;
             }
+            (Some(route), Verdict::Needs(cap)) => {
+                write!(f, "needs {} ({})", cap.name(), ShowRoute(route))?;
+            }
+            (Some(route), Verdict::Quirk(reason)) => {
+                write!(f, "off for this driver: {reason} ({})", ShowRoute(route))?;
+            }
+            (_, Verdict::Unavailable(os)) => write!(f, "not on {os}")?,
             _ => write!(f, "no route")?,
         }
         for (i, (route, skip)) in self.skipped.iter().enumerate() {
@@ -850,6 +1037,12 @@ impl fmt::Display for Outcome {
         }
         if !self.skipped.is_empty() {
             write!(f, "]")?;
+        }
+        if self.implied {
+            write!(f, " (needed by another)")?;
+        }
+        if let (true, Some(os)) = (self.granted(), self.untested_on) {
+            write!(f, " (untested on {os})")?;
         }
         Ok(())
     }
@@ -870,10 +1063,21 @@ impl fmt::Display for Plan {
             )?;
         }
         writeln!(f)?;
+        if let Some(device) = &self.device_info {
+            writeln!(f, "  device: {}", device.describe(self.os))?;
+        }
+        if let Some(memory) = &self.memory {
+            writeln!(f, "  memory: {memory}")?;
+        }
         for outcome in &self.outcomes {
             writeln!(f, "  {outcome}")?;
         }
-        if self.portability {
+        if let Some(skip) = self.portability_blocked {
+            writeln!(
+                f,
+                "  portability subset offered but not enabled, it {skip}:                  vkCreateDevice will fail until the instance has it"
+            )?;
+        } else if self.portability {
             let lacks = self.portability_lacks();
             if lacks.is_empty() {
                 writeln!(f, "  portability subset")?;

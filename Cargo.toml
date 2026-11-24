@@ -1,6 +1,6 @@
 [package]
 name = "numerobis"
-version = "0.4.1-beta"
+version = "0.4.2-beta"
 authors = ["Zinedin Polic"]
 edition = "2024"
 rust-version = "1.100.0"
@@ -38,3 +38,7 @@ libc = "0.2.191"
 # Turns the mock backend on for integration tests and doctests.
 numerobis = { path = ".", features = ["mock"] }
 
+# The project's standard: clippy::pedantic, with the exceptions reasoned
+# where they are (`#[allow(..., reason = "...")]`).
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

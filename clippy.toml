@@ -1,0 +1,2 @@
+# Terms the docs use as words, not code (".." keeps clippy's own list).
+doc-valid-idents = ["PCIe", ".."]

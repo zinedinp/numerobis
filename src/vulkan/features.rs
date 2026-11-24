@@ -12,6 +12,7 @@ use super::ApiVersion;
 
 mod generated;
 
+pub(crate) use generated::s_type;
 pub use generated::{CORE_1_0, CORE_1_1, CORE_1_2, CORE_1_3, CORE_1_4, Chain, VERSIONS};
 
 /// One `VkBool32` feature member.
@@ -95,6 +96,38 @@ impl Chain {
             _ => self,
         })
     }
+}
+
+/// What an extension needs before it can be enabled: the `depends`
+/// expression of `vk.xml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Depends {
+    /// The device works at this version or higher.
+    Version(ApiVersion),
+    /// This extension: core already, enabled on the instance, or offered by
+    /// the device with its own dependencies met.
+    Extension(&'static CStr),
+    /// All of them (`a+b`); empty for an extension without dependencies.
+    All(&'static [Depends]),
+    /// One of them (`a,b`).
+    Any(&'static [Depends]),
+    /// Vulkan SC only.
+    Never,
+}
+
+/// The dependencies of extension `name`. Known for every extension a route
+/// names, and for theirs; `None` for others.
+#[must_use]
+pub fn depends(name: &CStr) -> Option<&'static Depends> {
+    generated::DEPENDS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, d)| d)
+}
+
+/// Every extension [`depends`] knows.
+pub fn known_extensions() -> impl Iterator<Item = &'static CStr> {
+    generated::DEPENDS.iter().map(|&(n, _)| n)
 }
 
 /// The table of `version` (patch ignored), if known.
