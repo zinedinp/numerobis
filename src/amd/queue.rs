@@ -1,28 +1,28 @@
 //! One AQL compute queue on KFD: the packet ring, `amd_queue_t` with the
 //! dispatch ids, EOP and context save buffers, the doorbell, and a pool of
-//! completion signals with one kernarg slot each.
+//! completion signals ([`Signals`]) with one kernarg slot each.
 //!
-//! Fences count dispatches from 1. Fence `n` is packet `n - 1` and owns
-//! signal and kernarg slot `n % SLOTS`; every packet carries the barrier
-//! bit, so packets retire in order and a slot is free again once the fence
-//! `SLOTS` before has signalled.
+//! Fences count packets from 1: fence `n` is packet `n - 1` and owns signal
+//! and kernarg slot `n % SLOTS`. Every packet carries the barrier bit, so
+//! packets retire in order.
 
 use std::sync::atomic::{Ordering, fence};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::kfd::{Bo, Gpu, Kind, call};
-use super::sys::{self, DispatchPacket, queue as q, signal as sig};
+use super::signals::{SLOTS, Signals, view};
+use super::sys::{self, DispatchPacket, queue as q};
 use crate::runtime::error::{Error, Result};
-use crate::runtime::os::{Map, RW, View};
+use crate::runtime::os::{Map, RW};
 
 /// Packets in the ring (a power of two).
 const RING: u64 = 1024;
-/// Signal and kernarg slots.
-const SLOTS: u64 = 256;
 /// Bytes of kernarg per slot (the shared kernels take under 400).
 pub const KERNARG_SLOT: u64 = 1024;
 /// Doorbells come in a two-page window.
-const DOORBELL_WINDOW: usize = 0x2000;
+pub(crate) const DOORBELL_WINDOW: usize = 0x2000;
+/// `dep_signal` entries of a barrier-AND packet.
+pub const BARRIER_DEPS: usize = 5;
 
 /// What a dispatch needs from its kernel.
 #[derive(Debug, Clone, Copy)]
@@ -42,21 +42,13 @@ pub struct Queue {
     ring: Bo,
     /// `amd_queue_t`: the dispatch ids the CP reads and writes.
     header: Bo,
-    signals: Bo,
+    pub(crate) signals: Signals,
     kernargs: Bo,
     /// Kept for the queue's life, which the CP uses.
     eop: Bo,
     cwsr: Bo,
     doorbell: Map,
     doorbell_at: usize,
-    /// Fences handed out so far; the next dispatch gets `last + 1`.
-    pub last: u64,
-    /// Highest fence seen signalled.
-    completed: u64,
-}
-
-fn view(bo: &Bo) -> View {
-    bo.cpu().expect("CPU-mapped queue memory")
 }
 
 impl Queue {
@@ -70,7 +62,7 @@ impl Queue {
         let sizes = gpu.node.queue_sizes()?;
         let ring = gpu.alloc(RING * 64, Kind::Gtt)?;
         let amd_queue = gpu.alloc(4096, Kind::Gtt)?;
-        let signals = gpu.alloc(SLOTS * sig::SIZE as u64, Kind::Gtt)?;
+        let signals = Signals::new(gpu)?;
         let kernargs = gpu.alloc(SLOTS * KERNARG_SLOT, Kind::Gtt)?;
         let eop = gpu.alloc(u64::from(sizes.eop), Kind::Gtt)?;
         let cwsr = gpu.alloc(sizes.cwsr_buffer(), Kind::Gtt)?;
@@ -134,34 +126,18 @@ impl Queue {
             cwsr,
             doorbell,
             doorbell_at: usize::try_from(c.doorbell_offset - window).expect("in the window"),
-            last: 0,
-            completed: 0,
         })
     }
 
-    fn slot(f: u64) -> usize {
-        (f % SLOTS) as usize
-    }
-
-    fn signal_value(&self, f: u64) -> i64 {
-        view(&self.signals).read64(Self::slot(f) * sig::SIZE + sig::VALUE) as i64
+    /// Fences handed out so far; the next packet gets `last() + 1`.
+    #[must_use]
+    pub fn last(&self) -> u64 {
+        self.signals.last
     }
 
     /// Whether fence `f` has signalled. Fence 0 (nothing) always has.
     pub fn done(&mut self, f: u64) -> bool {
-        if f <= self.completed {
-            return true;
-        }
-        if f > self.last {
-            return false;
-        }
-        // Its slot was reused only after it signalled, so a slot that holds
-        // a later fence means done too; the CP decrements 1 to 0.
-        if self.signal_value(f) <= 0 {
-            self.completed = f;
-            return true;
-        }
-        false
+        self.signals.done(f)
     }
 
     /// Blocks until fence `f` has signalled.
@@ -170,51 +146,33 @@ impl Queue {
     ///
     /// [`Error::Timeout`] when it hasn't after `timeout`.
     pub fn wait(&mut self, f: u64, timeout: Duration) -> Result<()> {
-        let start = Instant::now();
-        let mut spins = 0u32;
-        while !self.done(f) {
-            if start.elapsed() > timeout {
-                let e = Error::Timeout(timeout);
-                super::kfd::trace(&self.state(f), &e);
-                return Err(e);
-            }
-            spins += 1;
-            if spins < 1000 {
-                std::hint::spin_loop();
-            } else {
-                std::thread::sleep(Duration::from_micros(20));
-            }
-        }
-        // Device writes released at system scope; order the host's reads after.
-        fence(Ordering::Acquire);
-        Ok(())
+        let (ring, header) = (view(&self.ring), view(&self.header));
+        self.signals.wait(f, timeout, |s| state(s, ring, header, f))
     }
 
-    /// What the CP has done, for the trace of a timeout.
-    fn state(&self, f: u64) -> String {
-        let a = view(&self.header);
-        let packet = (f.saturating_sub(1) % RING) as usize * 64;
-        format!(
-            "fence {f} (last {}): read dispatch id {}, write dispatch id {}, signal {}, header {:#06x}",
-            self.last,
-            a.read64(q::READ_DISPATCH_ID),
-            a.read64(q::WRITE_DISPATCH_ID),
-            self.signal_value(f),
-            view(&self.ring).read32(packet) & 0xffff
-        )
-    }
-
-    /// Queues a barrier packet that runs nothing; returns its fence. The
-    /// backend checks with it that the queue runs at all.
+    /// Queues a barrier packet that runs nothing until every signal in
+    /// `deps` (at most [`BARRIER_DEPS`] `amd_signal_t` addresses) is 0;
+    /// returns its fence. The backend checks with one without deps that the
+    /// queue runs at all.
     ///
     /// # Errors
     ///
-    /// As [`dispatch`](Self::dispatch).
-    pub fn barrier(&mut self) -> Result<u64> {
-        let (f, at) = self.claim()?;
-        // header, reserved, dep_signal[5], reserved, completion_signal.
+    /// [`Error::InvalidArgument`] for more than five deps, else as
+    /// [`dispatch`](Self::dispatch).
+    pub fn barrier(&mut self, deps: &[u64]) -> Result<u64> {
+        if deps.len() > BARRIER_DEPS {
+            return Err(Error::InvalidArgument(format!(
+                "{} signals for one barrier, at most {BARRIER_DEPS}",
+                deps.len()
+            )));
+        }
+        let (f, signal) = self.claim()?;
+        // header, reserved, dep_signal[5] at 8, reserved, completion_signal at 56.
         let mut p = [0u8; 64];
-        p[56..64].copy_from_slice(&(self.signals.va + at as u64).to_le_bytes());
+        for (i, d) in deps.iter().enumerate() {
+            p[8 + i * 8..16 + i * 8].copy_from_slice(&d.to_le_bytes());
+        }
+        p[56..64].copy_from_slice(&signal.to_le_bytes());
         let header = sys::PACKET_BARRIER_AND
             | sys::HEADER_BARRIER
             | sys::HEADER_ACQUIRE_SYSTEM
@@ -223,21 +181,14 @@ impl Queue {
         Ok(f)
     }
 
-    /// The next fence, once its signal slot and a ring slot are free; its
-    /// signal armed. Returns the fence and the signal's offset.
-    fn claim(&mut self) -> Result<(u64, usize)> {
-        let f = self.last + 1;
-        let busy = Duration::from_secs(10);
-        // The slot's previous fence, and ring room for the packet.
-        self.wait(f.saturating_sub(SLOTS), busy)?;
-        self.wait(f.saturating_sub(RING), busy)?;
-        let s = view(&self.signals);
-        let at = Self::slot(f) * sig::SIZE;
-        s.write64(at + sig::KIND, 1);
-        s.write64(at + sig::VALUE, 1);
-        s.write64(at + sig::START_TS, 0);
-        s.write64(at + sig::END_TS, 0);
-        Ok((f, at))
+    /// The next fence, once a ring slot is free; its signal armed. Returns
+    /// the fence and the signal's address.
+    fn claim(&mut self) -> Result<(u64, u64)> {
+        let next = self.signals.last + 1;
+        self.wait(next.saturating_sub(RING), Duration::from_secs(10))?;
+        let (ring, header) = (view(&self.ring), view(&self.header));
+        self.signals
+            .arm(|s| state(s, ring, header, next.saturating_sub(SLOTS)))
     }
 
     /// Writes packet `f - 1` (its first word `first` last), and rings.
@@ -253,7 +204,6 @@ impl Queue {
         // Write-combined host writes and the dispatch id before the doorbell.
         fence(Ordering::SeqCst);
         self.doorbell.write64(self.doorbell_at, index);
-        self.last = f;
     }
 
     /// Queues one dispatch; returns its fence.
@@ -269,8 +219,8 @@ impl Queue {
                 l.kernargs.len()
             )));
         }
-        let (f, at) = self.claim()?;
-        let karg = Self::slot(f) as u64 * KERNARG_SLOT;
+        let (f, signal) = self.claim()?;
+        let karg = Signals::slot(f) as u64 * KERNARG_SLOT;
         view(&self.kernargs).write_bytes(karg as usize, l.kernargs);
 
         let p = DispatchPacket {
@@ -285,7 +235,7 @@ impl Queue {
             group_segment_size: l.lds,
             kernel_object: l.descriptor,
             kernarg_address: self.kernargs.va + karg,
-            completion_signal: self.signals.va + at as u64,
+            completion_signal: signal,
             ..Default::default()
         };
         // SAFETY: DispatchPacket is plain old data of 64 bytes.
@@ -298,35 +248,41 @@ impl Queue {
     /// CP timestamps of fence `f` (start, end), once signalled and while its
     /// slot holds it.
     pub fn timestamps(&mut self, f: u64) -> Option<(u64, u64)> {
-        if !self.done(f) || f + SLOTS <= self.last {
-            return None;
-        }
-        let s = view(&self.signals);
-        let at = Self::slot(f) * sig::SIZE;
-        let (a, b) = (s.read64(at + sig::START_TS), s.read64(at + sig::END_TS));
-        (a != 0 && b >= a).then_some((a, b))
+        self.signals.timestamps(f)
     }
 
     /// Waits for everything and destroys the queue on `gpu`, then frees its
     /// buffers.
     pub fn close(mut self, gpu: &Gpu) {
-        let _ = self.wait(self.last, Duration::from_secs(5));
+        let _ = self.wait(self.last(), Duration::from_secs(5));
         destroy(gpu, self.id);
         drop(self.doorbell);
-        for bo in [
-            self.ring,
-            self.header,
-            self.signals,
-            self.kernargs,
-            self.eop,
-            self.cwsr,
-        ] {
+        self.signals.free(gpu);
+        for bo in [self.ring, self.header, self.kernargs, self.eop, self.cwsr] {
             gpu.free(bo);
         }
     }
 }
 
-fn destroy(gpu: &Gpu, id: u32) {
+/// What the CP has done about fence `f`, for the trace of a timeout.
+fn state(
+    s: &Signals,
+    ring: crate::runtime::os::View,
+    header: crate::runtime::os::View,
+    f: u64,
+) -> String {
+    let packet = (f.saturating_sub(1) % RING) as usize * 64;
+    format!(
+        "AQL fence {f} (last {}): read dispatch id {}, write dispatch id {}, signal {}, header {:#06x}",
+        s.last,
+        header.read64(q::READ_DISPATCH_ID),
+        header.read64(q::WRITE_DISPATCH_ID),
+        s.value(f),
+        ring.read32(packet) & 0xffff
+    )
+}
+
+pub(crate) fn destroy(gpu: &Gpu, id: u32) {
     let mut d = sys::DestroyQueue {
         queue_id: id,
         pad: 0,

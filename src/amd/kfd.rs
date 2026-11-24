@@ -72,6 +72,8 @@ pub struct Node {
     pub lds_size_in_kb: u32,
     pub wave_front_size: u32,
     pub num_xcc: u32,
+    /// SDMA engines (`num_sdma_engines`, without the XGMI ones).
+    pub sdma_engines: u32,
     /// Context save area and control stack sizes, as the kernel checks them
     /// at queue creation (Linux 6.12 and later publish them; else 0).
     pub cwsr_size: u32,
@@ -103,6 +105,7 @@ impl Node {
             lds_size_in_kb: get("lds_size_in_kb").unwrap_or(64),
             wave_front_size: get("wave_front_size").unwrap_or(64),
             num_xcc: get("num_xcc").unwrap_or(1).max(1),
+            sdma_engines: get("num_sdma_engines").unwrap_or(0),
             cwsr_size: get("cwsr_size").unwrap_or(0),
             ctl_stack_size: get("ctl_stack_size").unwrap_or(0),
         };
@@ -244,6 +247,9 @@ pub enum Kind {
     /// context save area. Executable, as `ROCr` allocates the AQL ring: without
     /// it the CP never fetches a packet.
     Gtt,
+    /// System memory, cached and coherent: the host side of SDMA copies,
+    /// which the CPU fills and reads at full speed.
+    Staging,
     /// [`Kind::Vram`], executable: the code object.
     Code,
 }
@@ -254,6 +260,7 @@ impl Kind {
             Kind::Vram => mem::VRAM | mem::WRITABLE | mem::PUBLIC,
             Kind::VramPrivate => mem::VRAM | mem::WRITABLE,
             Kind::Gtt => mem::GTT | mem::WRITABLE | mem::COHERENT | mem::UNCACHED | mem::EXECUTABLE,
+            Kind::Staging => mem::GTT | mem::WRITABLE | mem::COHERENT,
             Kind::Code => mem::VRAM | mem::WRITABLE | mem::PUBLIC | mem::EXECUTABLE,
         }
     }
@@ -606,6 +613,11 @@ impl Gpu {
         unsafe { call(self.kfd, sys::EXPORT_DMABUF, &raw mut e, "EXPORT_DMABUF") }?;
         // SAFETY: KFD returned a new descriptor we own.
         Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(e.dmabuf_fd as i32) })
+    }
+
+    /// The render node whose VM KFD uses (for `DRM_AMDGPU_CS`).
+    pub(crate) fn drm(&self) -> &'static Fd {
+        self.drm
     }
 
     /// GPU timestamp ticks per second, from two clock-counter reads.

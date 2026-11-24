@@ -17,6 +17,7 @@ mod common;
 use std::os::fd::AsFd;
 
 use common::*;
+use numerobis::amd::backend::CopyEngine;
 use numerobis::elem::*;
 use numerobis::{Choice, Device, GemmShape, Placement, ops};
 
@@ -172,4 +173,69 @@ fn placement_finds_a_gpu_without_a_matrix_engine() {
     // best there is.
     let picked = Placement::Fastest.pick(&[dev]).unwrap();
     assert_eq!(picked.features().name, name);
+}
+
+/// The backend of every copy engine (each opened on its own).
+fn engines() -> Vec<(CopyEngine, Device)> {
+    let mut v = Vec::new();
+    for e in [CopyEngine::Sdma, CopyEngine::DriverSdma, CopyEngine::Cpu] {
+        match numerobis::amd::backend::probe_with(e).into_iter().next() {
+            Some(Ok(d)) => v.push((e, d)),
+            Some(Err(err)) => eprintln!("amd ({e:?}): {err}"),
+            None => {}
+        }
+    }
+    v
+}
+
+#[test]
+fn every_copy_engine_moves_large_buffers() {
+    for (e, dev) in engines() {
+        assert!(
+            dev.features().driver.contains(e.name()),
+            "{}",
+            dev.features().driver
+        );
+        let mut s = dev.stream();
+        // 48 MiB: twelve SDMA packets of 4 MiB, and a tail.
+        let n = (48 << 20) / 4 + 3;
+        let mut rng = Rng(e as u64 + 1);
+        let vals: Vec<f32> = (0..n).map(|_| rng.f()).collect();
+        // Twice: the second time with staging the backend kept.
+        for round in ["first", "again"] {
+            let t = std::time::Instant::now();
+            let x = s.upload::<F32>(&vals).unwrap();
+            let back = download(&mut s, &x);
+            let took = t.elapsed();
+            assert!(back == vals, "{e:?}: round trip differs");
+            eprintln!(
+                "{e:?} ({round}): 48 MiB up and down in {took:?} ({:.1} GB/s)",
+                2.0 * f64::from(n * 4) / took.as_secs_f64() / 1e9
+            );
+        }
+    }
+}
+
+#[test]
+fn copies_and_kernels_keep_their_order_without_waiting() {
+    // Nothing waits on the host until the end: a copy that overwrites a
+    // kernel's input must wait for the kernel, a kernel for the copy before
+    // it, a download for the kernel that wrote its buffer.
+    for (e, dev) in engines() {
+        let mut s = dev.stream();
+        let n = 1 << 20;
+        let a: Vec<f32> = (0..n).map(|i| (i % 7) as f32 - 3.0).collect();
+        let b: Vec<f32> = (0..n).map(|i| 2.0 - (i % 5) as f32).collect();
+        let x = s.upload::<F32>(&a).unwrap();
+        let mut y = s.alloc::<F32>(n).unwrap();
+        let mut z = s.alloc::<F32>(n).unwrap();
+        drop(ops::act(&mut s, Choice::Up, ops::Act::Relu, &x, &mut y).unwrap());
+        s.write(&x, &b).unwrap(); // after the kernel read `a`
+        drop(ops::act(&mut s, Choice::Up, ops::Act::Relu, &x, &mut z).unwrap());
+        let got_y = s.download(&y).unwrap();
+        let got_z = s.download(&z).unwrap();
+        let relu = |v: &[f32]| v.iter().map(|v| v.max(0.0)).collect::<Vec<_>>();
+        assert!(got_y.wait().unwrap().to_vec() == relu(&a), "{e:?}: y");
+        assert!(got_z.wait().unwrap().to_vec() == relu(&b), "{e:?}: z");
+    }
 }

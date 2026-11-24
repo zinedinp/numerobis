@@ -2,7 +2,9 @@
 //!
 //! Raw path (feature `amd`, Linux): `/dev/kfd` with the process VM on the
 //! GPU's render node, buffers at one address for CPU and GPU, one AQL
-//! compute queue (ring, `amd_queue_t`, doorbell, completion signals), and
+//! compute queue (ring, `amd_queue_t`, doorbell, completion signals), copies
+//! on the SDMA engine (a user-mode queue, or the driver's ring; see
+//! [`backend::CopyEngine`]), and
 //! the shared Emulated kernels from `kernels/bin/amd` (`gfx10-3-generic` for
 //! all of RDNA 2, `gfx1100`, `gfx1200`, CDNA `gfx908` to `gfx950`). No `ROCm`
 //! user space. MFMA/WMMA tiers (`nb_amd.h`) are the next step.
@@ -12,7 +14,9 @@
 //! | `program` | HSACO parsing: image, kernel descriptors, kernarg layout (code object v5) |
 //! | `sys` | KFD ioctl structs (size-asserted), AQL packet, `amd_queue_t` and `amd_signal_t` offsets |
 //! | `kfd` | topology nodes, queue buffer sizes, VM, buffer objects |
+//! | `signals` | HSA completion signals, shared by both engines |
 //! | `queue` | the AQL queue |
+//! | `sdma` | SDMA packets, the user-mode SDMA queue and the driver's ring |
 //! | `backend` | the [`Backend`](crate::runtime::Backend) implementation |
 
 #![allow(
@@ -36,6 +40,10 @@ pub mod backend;
 pub mod kfd;
 #[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
 mod queue;
+#[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
+pub mod sdma;
+#[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
+mod signals;
 #[cfg(all(feature = "amd", target_os = "linux", target_pointer_width = "64"))]
 pub(crate) mod sys;
 
