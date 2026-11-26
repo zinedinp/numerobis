@@ -231,6 +231,8 @@ capabilities! {
     PresentWait => present::PRESENT_WAIT,
     PresentId2 => present::PRESENT_ID2,
     PresentWait2 => present::PRESENT_WAIT2,
+    HdrMetadata => present::HDR_METADATA,
+    SwapchainColorSpace => present::SWAPCHAIN_COLOR_SPACE,
     // Interop.
     ExternalMemoryFd => interop::EXTERNAL_MEMORY_FD,
     DmaBuf => interop::DMA_BUF,

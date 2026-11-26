@@ -80,3 +80,23 @@ pub const PRESENT_WAIT2: Spec = Spec {
         &["presentWait2"],
     )],
 };
+
+pub const HDR_METADATA: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[],
+    name: "hdr_metadata",
+    doc: "vkSetHdrMetadataEXT: the mastering display and content light \
+          levels of an HDR swapchain (color_space::HdrMetadata)",
+    routes: &[ext(c"VK_EXT_hdr_metadata", None, &[])],
+};
+
+pub const SWAPCHAIN_COLOR_SPACE: Spec = Spec {
+    area: AREA,
+    support: Support::WINDOWS_TESTED,
+    needs: &[],
+    name: "swapchain_color_space",
+    doc: "surface formats beyond sRGB non-linear: HDR10, HLG, scRGB, \
+          Display P3 (an instance extension: Instance::with_color_spaces)",
+    routes: &[ext(c"VK_EXT_swapchain_colorspace", None, &[])],
+};

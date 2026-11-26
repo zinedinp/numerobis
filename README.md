@@ -48,7 +48,10 @@ numerobis = { version = "0.4.0-beta", features = ["nvidia", "amd", "tt"] }
 | `intel`, `xdna`, `v3d`, `accel`, `cuda`, `hip` | reserved, no code yet |
 
 `vulkan` and `directx` build without each other; a host takes the one it
-needs. With both, `directx::vulkan` converts between them.
+needs. With both, `directx::vulkan` converts between them. Both describe
+colour with [keinbonus](https://crates.io/crates/keinbonus) (H.273 colour
+descriptions, transfer functions, HDR metadata), re-exported as
+`numerobis::keinbonus`.
 
 Without any feature, `Device::all()` is empty and the crate still builds
 (type layer, ops API, ELF loader, `pci`).
@@ -191,14 +194,15 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   from, the extensions the version promoted, which single struct a version
   struct absorbed when, and every extension's `depends` expression. Generated
   from `vk.xml` (see below).
-- `vulkan::caps`: 94 `Capability`s, one module per area: `draw`, `mesh`
+- `vulkan::caps`: 96 `Capability`s, one module per area: `draw`, `mesh`
   (mesh and task shaders), `ray tracing` (acceleration structures,
   pipelines, ray queries, opacity micromaps, invocation reorder), `memory`,
   `shader`, `compute` (cooperative matrix, bfloat16, float8, memory model),
   `descriptor`, `pipeline` (dynamic state, pipeline libraries, shader
   objects, maintenance4-6), `sync` (timelines, queries, queue priority),
   `render` (texture compression, debug raster, shading rate, interlock,
-  conservative rasterization), `present` (present id/wait), `interop` (fd, dma-buf and DRM
+  conservative rasterization), `present` (present id/wait, HDR metadata,
+  swapchain colour spaces), `interop` (fd, dma-buf and DRM
   modifiers on Linux; Win32 handles on Windows). Each has its routes in
   fallback order: newest core version first, then the extensions that
   offered it before, and may `need` others (`shader_object` needs
@@ -224,6 +228,32 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   `create_with_fallback`, which steps down on `VK_ERROR_NOT_PERMITTED`.
   It ranks this process's GPU queues against other processes on the same
   GPU; an NPU or another GPU has its own scheduler and doesn't see it.
+- `vulkan::alloc`: memory sub-allocation as logic, the host keeping
+  `vkAllocateMemory` and the binds: the memory types per `Usage` (device,
+  device mapped, upload, readback, transient) in fallback order, host
+  memory first past the VRAM budget; block size per heap; `Block`, a
+  first-fit range allocator with alignment and `bufferImageGranularity`;
+  `AllocationCount` against `maxMemoryAllocationCount`.
+- `vulkan::swapchain`: present mode per `Pacing` (vsync, low latency,
+  uncapped), surface format per `Encoding` (sRGB or UNORM), composite
+  alpha, image count, extent, and `recreate`: always on `OUT_OF_DATE`, on
+  `SUBOPTIMAL` only when the surface's size changed (Mesa on X11 reports it
+  on every present). `output_format` picks HDR10, HLG, scRGB or Display P3
+  from the renderer's wishes, each in its colour space and its formats
+  (10:10:10:2 before 16-bit float, no `_SRGB` format under PQ).
+  `vulkan::format`: the depth format waterfall from
+  `vkGetPhysicalDeviceFormatProperties`.
+- `vulkan::color_space`: every `VkColorSpaceKHR` as a keinbonus description
+  (primaries and curve, checked against Vulkan's table; DCI-P3 non-linear is
+  XYZ with ST 428's curve; Adobe RGB has chromaticities but no H.273 code
+  point), `for_signal` for the colour space that presents a video signal
+  unconverted, scRGB's 80 cd/m² white, and `HdrMetadata`
+  (`VkHdrMetadataEXT`) from HDR10's ST 2086 and CTA-861.3 values.
+  `Instance::with_color_spaces` enables `VK_EXT_swapchain_colorspace`, without
+  which surfaces list sRGB only.
+- `elem::Pod` / `elem::as_bytes`: a host's `#[repr(C)]` vertex and command
+  structs as bytes (`Pod` covers the integer and float types and arrays of
+  `Pod`).
 
 ```rust
 use numerobis::vulkan::{ApiVersion, Capability as Cap, Chain, Instance, Offer, Probe, rank};
@@ -379,8 +409,14 @@ Also there:
   community layers DXVK, vkd3d-proton, wined3d and d3d8to9 (how Direct3D
   runs on Linux through Wine and Proton), with the interfaces only each
   answers (`QueryInterface` tells which one a device belongs to).
+- `modern::color`: the RGB `DXGI_COLOR_SPACE_TYPE`s a swap chain takes, as
+  keinbonus descriptions where DXGI's text is unambiguous (sRGB, scRGB,
+  BT.709 studio, PQ BT.2020), and `HdrMetadataHdr10` for `SetHDRMetaData`
+  (chromaticities in 1/50 000, the peak in whole cd/m², black in
+  0.0001 cd/m²).
 - `directx::vulkan` (with feature `vulkan`): conversions done in `const fn`s
-  (queue priority, `DXGI_FORMAT` to `VkFormat` as DXVK maps them), the
+  (queue priority, `DXGI_FORMAT` to `VkFormat` as DXVK maps them, the swap
+  chain colour spaces sRGB, scRGB and HDR10), the
   Vulkan capabilities DXVK / vkd3d-proton need before they report a Direct3D
   one, and the highest feature level a Vulkan device could back.
 
@@ -457,7 +493,7 @@ capability that is untested on its OS with `(untested on Linux)`.
 | raw Tenstorrent backend | kernel code under qemu, on-card pending | unavailable |
 | `dmabuf`, `sync` | tested on amdgpu (Radeon 680M): timeline syncobjs, PRIME export/import of a real buffer; `/dev/udmabuf` needs the `kvm` group, else the memfd fallback | unavailable |
 | `pci` tables, `vulkan` tables and waterfall, `directx` tables | unit-tested | unit-tested |
-| Vulkan capabilities on a real driver | 80 tested (AMD Radeon 680M, integrated, RADV 26.3.1, API 1.0 to 1.4; without the validation layer) | 77 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
+| Vulkan capabilities on a real driver | 80 tested (AMD Radeon 680M, integrated, RADV 26.3.1, API 1.0 to 1.4; without the validation layer) | 79 tested (Intel Arc B580, driver 101.9175, API 1.0 to 1.4 under validation) |
 | Direct3D 10 to 12 capabilities on a real driver | untested (DXVK, vkd3d-proton) | 59 tested (B580: D3D12 at 12_2 with shader model 6.8, D3D11, 10.1, under the debug layers) |
 | Direct3D 8 / 9 capabilities | untested (DXVK) | 45 tested (B580: D3D9, and D3D8 from Microsoft's 32-bit runtime) |
 | `directx::modern::queue` | untested | tested: normal and high; global realtime refused without the privilege, with it untested |

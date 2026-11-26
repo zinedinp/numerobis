@@ -19,6 +19,7 @@ use std::fmt;
 
 pub mod cache;
 pub mod caps;
+pub mod color;
 pub mod dxgi;
 pub mod queue;
 

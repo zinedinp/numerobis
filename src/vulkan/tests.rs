@@ -421,6 +421,60 @@ fn an_available_route_that_says_no_ends_the_waterfall() {
 }
 
 #[test]
+fn colour_spaces_come_from_the_instance_and_hdr_metadata_from_the_device() {
+    let caps = [Capability::SwapchainColorSpace, Capability::HdrMetadata];
+    let available = [
+        c"VK_KHR_surface",
+        c"VK_EXT_swapchain_colorspace",
+        c"VK_EXT_debug_utils",
+    ];
+    let instance = Instance::new(Some(V::V1_3), V::V1_3, available).with_color_spaces(available);
+    assert_eq!(instance.extensions(), [c"VK_EXT_swapchain_colorspace"]);
+    // Enabled twice is still once; not available, not added.
+    let again = instance.clone().with_color_spaces(available);
+    assert_eq!(again.extensions(), instance.extensions());
+    let bare = Instance::new(Some(V::V1_3), V::V1_3, [c"VK_KHR_surface"])
+        .with_color_spaces([c"VK_KHR_surface"]);
+    assert_eq!(bare.extensions(), [] as [&CStr; 0]);
+
+    let device = [c"VK_EXT_hdr_metadata", c"VK_KHR_swapchain"];
+    let enabled: Vec<&CStr> = instance
+        .extensions()
+        .iter()
+        .copied()
+        .chain([c"VK_KHR_surface"])
+        .collect();
+    let offer = Offer::new(V::V1_3, V::V1_3, device).with_instance(enabled);
+    let mut probe = Probe::new(offer, &caps);
+    fill(&mut probe, &[]);
+    let plan = probe.plan();
+    assert!(plan.has(Capability::SwapchainColorSpace) && plan.has(Capability::HdrMetadata));
+    // The instance extension is not the device's to enable.
+    assert_eq!(
+        plan.extensions(),
+        [c"VK_EXT_hdr_metadata", c"VK_KHR_swapchain"]
+    );
+
+    // An instance created without it: no colour spaces, whatever the device.
+    let offer = Offer::new(V::V1_3, V::V1_3, device).with_instance([c"VK_KHR_surface"]);
+    let mut probe = Probe::new(offer, &caps);
+    fill(&mut probe, &[]);
+    let plan = probe.plan();
+    let spaces = plan
+        .outcome(Capability::SwapchainColorSpace)
+        .expect("asked");
+    assert_eq!(spaces.verdict, Verdict::NoRoute);
+    assert_eq!(
+        spaces.skipped.as_slice(),
+        [(
+            &caps[0].spec().routes[0],
+            Skip::NotOffered(c"VK_EXT_swapchain_colorspace")
+        )]
+    );
+    assert!(plan.has(Capability::HdrMetadata));
+}
+
+#[test]
 fn missing_dependencies_and_versions_are_logged() {
     let offer = Offer::new(V::V1_1, V::V1_1, [c"VK_EXT_mesh_shader"]);
     let mut probe = Probe::new(offer, &[Capability::MeshShader, Capability::PushDescriptor]);

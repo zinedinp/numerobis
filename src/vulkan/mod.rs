@@ -17,6 +17,13 @@
 //!   [`BudgetCache`] reads the memory budget again when it is too old.
 //! - [`priority`]: queue global priority at `vkCreateDevice`, with the
 //!   fallback when the driver refuses a level.
+//! - [`alloc`]: memory sub-allocation as logic: memory types per usage,
+//!   block sizes, a range allocator, the live allocation count.
+//! - [`swapchain`]: present mode, surface format (SDR, HDR, wide gamut),
+//!   extent and image count, and when to recreate after a present.
+//! - [`color_space`]: what a `VkColorSpaceKHR` means as a [`keinbonus`]
+//!   colour description, and `VkHdrMetadataEXT` from HDR10 metadata.
+//! - [`format`](mod@format): the depth format waterfall and the `VkFormat`s used.
 //!
 //! ```
 //! use numerobis::vulkan::{ApiVersion, Capability as Cap, Instance, Offer, Probe};
@@ -46,13 +53,17 @@
 use std::ffi::CStr;
 use std::fmt;
 
+pub mod alloc;
 pub mod cache;
 pub mod caps;
+pub mod color_space;
 pub mod device;
 pub mod features;
+pub mod format;
 pub mod memory;
 mod plan;
 pub mod priority;
+pub mod swapchain;
 
 pub use crate::platform::{Os, Status, Support};
 pub use caps::{Area, Capability, Route};
@@ -195,6 +206,20 @@ impl Instance {
             flags,
             extensions,
         }
+    }
+
+    /// Adds `VK_EXT_swapchain_colorspace` when `available` lists it.
+    /// Without it a surface lists sRGB non-linear only: no HDR10, HLG,
+    /// scRGB or Display P3 ([`swapchain::output_format`]). It depends on
+    /// `VK_KHR_surface`, which the host enables with its surface, so it is
+    /// not part of [`new`](Self::new), which compute hosts use too.
+    #[must_use]
+    pub fn with_color_spaces<'a>(mut self, available: impl IntoIterator<Item = &'a CStr>) -> Self {
+        let name = color_space::SWAPCHAIN_COLORSPACE;
+        if available.into_iter().any(|e| e == name) && !self.extensions.contains(&name) {
+            self.extensions.push(name);
+        }
+        self
     }
 
     /// Instance extensions to enable; pass the same to

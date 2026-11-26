@@ -1135,6 +1135,17 @@ const PROMOTED_1_4: &[&CStr] = &[
 /// their dependencies, as `vk.xml` states it.
 pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     (
+        c"VK_AMD_display_native_hdr",
+        Depends::All(&[
+            Depends::Any(&[
+                Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
+                Depends::Version(ApiVersion::V1_1),
+            ]),
+            Depends::Extension(c"VK_KHR_get_surface_capabilities2"),
+            Depends::Extension(c"VK_KHR_swapchain"),
+        ]),
+    ),
+    (
         c"VK_EXT_calibrated_timestamps",
         Depends::Any(&[
             Depends::Extension(c"VK_KHR_get_physical_device_properties2"),
@@ -1224,6 +1235,10 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
             ]),
             Depends::Extension(c"VK_KHR_pipeline_library"),
         ]),
+    ),
+    (
+        c"VK_EXT_hdr_metadata",
+        Depends::Extension(c"VK_KHR_swapchain"),
     ),
     (
         c"VK_EXT_host_image_copy",
@@ -1378,6 +1393,10 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     (
         c"VK_EXT_subgroup_size_control",
         Depends::Version(ApiVersion::V1_1),
+    ),
+    (
+        c"VK_EXT_swapchain_colorspace",
+        Depends::Extension(c"VK_KHR_surface"),
     ),
     (
         c"VK_EXT_texture_compression_astc_hdr",
@@ -1836,7 +1855,7 @@ pub(super) const DEPENDS: &[(&CStr, Depends)] = &[
     ),
 ];
 
-/// `sType` values of the property, query and create-info structs.
+/// `sType` values of the property, query, create-info and metadata structs.
 pub(crate) mod s_type {
     /// `VkPhysicalDeviceProperties2`.
     pub const PROPERTIES_2: i32 = 1_000_059_001;
@@ -1856,6 +1875,8 @@ pub(crate) mod s_type {
     pub const QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES: i32 = 1_000_388_001;
     /// `VkDeviceQueueGlobalPriorityCreateInfo`.
     pub const DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO: i32 = 1_000_174_000;
+    /// `VkHdrMetadataEXT`.
+    pub const HDR_METADATA: i32 = 1_000_105_000;
 }
 
 /// Every instance extension: enabled at `vkCreateInstance`, never at

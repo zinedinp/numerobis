@@ -22,9 +22,10 @@ v3d = []
 accel = []
 # Comfort backends. `vulkan` and `directx` are the graphics API tables
 # (capabilities, routes, probes); each builds without the other, and with
-# both `directx::vulkan` converts between them.
-vulkan = []
-directx = []
+# both `directx::vulkan` converts between them. Both describe colour
+# (swapchain colour spaces, HDR metadata) with keinbonus.
+vulkan = ["dep:keinbonus"]
+directx = ["dep:keinbonus"]
 cuda = []
 hip = []
 # Test-only backend: runs the Emulated semantics in Rust on the host.
@@ -32,6 +33,7 @@ mock = []
 
 [dependencies]
 miraculix = { version = "^0.7.0", default-features = false }
+keinbonus = { version = "0.1.0", optional = true }
 
 # The raw backends and dma-bufs are Linux kernel UAPI.
 [target.'cfg(target_os = "linux")'.dependencies]

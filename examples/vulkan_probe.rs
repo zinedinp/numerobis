@@ -334,9 +334,11 @@ fn main() {
             })
             .unwrap_or(ApiVersion::NEWEST);
         let instance_setup =
-            Instance::new(loader, ceiling, available.iter().map(CString::as_c_str));
+            Instance::new(loader, ceiling, available.iter().map(CString::as_c_str))
+                .with_color_spaces(available.iter().map(CString::as_c_str));
         // The host's own: debug messages, and the surface extensions the
-        // present_id2 / present_wait2 routes depend on.
+        // present_id2 / present_wait2 routes (and the colour spaces) depend
+        // on.
         let mut instance_extensions: Vec<&CStr> = instance_setup.extensions().to_vec();
         let debug = validation && has(c"VK_EXT_debug_utils");
         for (name, wanted) in [

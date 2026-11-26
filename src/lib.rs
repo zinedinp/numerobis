@@ -95,6 +95,11 @@ pub mod nvidia;
 pub mod tt;
 pub mod v3d;
 
+/// The colour descriptions `vulkan` and `directx` speak in, at the
+/// version they were built with.
+#[cfg(any(feature = "vulkan", feature = "directx"))]
+pub use keinbonus;
+
 pub use engine::{Access, DeviceClass, Engine, FeatureSet};
 pub use miraculix::formats::Overflow;
 pub use ops::{Choice, GemmShape};

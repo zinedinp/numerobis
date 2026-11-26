@@ -327,7 +327,13 @@ impl Offer {
                 if let Some(core) = features::promoted_in(name).filter(|&v| v <= api) {
                     return Err(Skip::Promoted(core));
                 }
-                if !self.offers(name) {
+                // An instance extension counts where the instance enabled
+                // it; devices don't list those.
+                if features::is_instance_extension(name) {
+                    if !self.instance_has(name) {
+                        return Err(Skip::NotOffered(name));
+                    }
+                } else if !self.offers(name) {
                     return Err(Skip::NotOffered(name));
                 }
                 // Reading an extension's struct takes vkGetPhysicalDeviceFeatures2.
@@ -357,6 +363,8 @@ pub enum Skip {
     /// The extension is core from this version on: an earlier core route
     /// stands for it.
     Promoted(ApiVersion),
+    /// A device extension the device doesn't list, or an instance
+    /// extension the instance wasn't created with.
     NotOffered(&'static CStr),
     /// A dependency that is neither core nor offered (device extensions) or
     /// enabled (instance extensions).

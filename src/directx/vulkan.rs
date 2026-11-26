@@ -193,6 +193,58 @@ pub mod format {
     };
 }
 
+/// DXGI swap chain colour spaces and `VkColorSpaceKHR`, as DXVK and
+/// vkd3d-proton map them: sRGB, scRGB and HDR10, the three a DXGI swap
+/// chain presents in.
+pub mod color_space {
+    use crate::directx::modern::color::space;
+    use crate::vulkan::color_space::ColorSpace;
+
+    const TABLE: [(u32, ColorSpace); 3] = [
+        (space::RGB_FULL_G22_NONE_P709, ColorSpace::SrgbNonlinear),
+        (
+            space::RGB_FULL_G10_NONE_P709,
+            ColorSpace::ExtendedSrgbLinear,
+        ),
+        (space::RGB_FULL_G2084_NONE_P2020, ColorSpace::Hdr10St2084),
+    ];
+
+    /// The Vulkan colour space for a `DXGI_COLOR_SPACE_TYPE`.
+    #[must_use]
+    pub const fn to_vk(dxgi: u32) -> Option<ColorSpace> {
+        let mut i = 0;
+        while i < TABLE.len() {
+            if TABLE[i].0 == dxgi {
+                return Some(TABLE[i].1);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// The `DXGI_COLOR_SPACE_TYPE` for a Vulkan colour space.
+    #[must_use]
+    pub fn from_vk(vk: ColorSpace) -> Option<u32> {
+        TABLE.iter().find(|&&(_, v)| v == vk).map(|&(d, _)| d)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::directx::modern::color;
+
+        #[test]
+        fn both_sides_describe_the_same_signal() {
+            for (dxgi, vk) in TABLE {
+                assert_eq!(to_vk(dxgi), Some(vk));
+                assert_eq!(from_vk(vk), Some(dxgi));
+                assert_eq!(color::cicp(dxgi), vk.cicp(), "{vk}");
+            }
+            assert_eq!(from_vk(ColorSpace::Hdr10Hlg), None);
+        }
+    }
+}
+
 /// The Vulkan capabilities a translation layer needs before it reports
 /// `cap`. `Some(&[])`: it always does (part of every device it accepts);
 /// `None`: it hangs on something the Vulkan tables don't describe (format

@@ -249,17 +249,45 @@ pub trait Elem: sealed::Sealed + 'static {
     const NAME: &'static str = Self::FORMAT.name();
 }
 
-/// Plain-old-data host types that may be reinterpreted as bytes.
+/// Plain-old-data host types that may be reinterpreted as bytes: device
+/// elements here, and a host's own `#[repr(C)]` vertex, instance and
+/// command structs, whose bytes go to a buffer with [`as_bytes`].
+///
+/// ```
+/// use numerobis::elem::{Pod, as_bytes};
+///
+/// #[repr(C)]
+/// #[derive(Clone, Copy)]
+/// struct Vertex {
+///     pos: [f32; 3],
+///     uv: [u16; 2],
+/// }
+/// // SAFETY: repr(C), 12 + 4 bytes with no gap or tail, every field Pod.
+/// unsafe impl Pod for Vertex {}
+///
+/// let v = [Vertex { pos: [1.0, 0.0, 0.0], uv: [0, 1] }];
+/// assert_eq!(as_bytes(&v).len(), 16);
+/// ```
 ///
 /// # Safety
-/// Implementors must have no padding and accept every bit pattern.
+/// Implementors must have no padding (between fields or at the end) and
+/// accept every bit pattern: no `bool`, `char`, enum, reference or
+/// `NonZero*` anywhere inside.
 pub unsafe trait Pod: Copy + Send + Sync + 'static {}
-unsafe impl Pod for u8 {}
-unsafe impl Pod for i8 {}
-unsafe impl Pod for u16 {}
-unsafe impl Pod for i32 {}
-unsafe impl Pod for u32 {}
-unsafe impl Pod for f32 {}
+macro_rules! pod {
+    ($($t:ty),*) => { $(unsafe impl Pod for $t {})* };
+}
+pod!(u8, i8, u16, i16, u32, i32, u64, i64, f32, f64);
+// SAFETY: an array is its elements back to back, `size_of::<T>()` apart
+// with no gap, so it has padding only if `T` has.
+unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
+
+/// The bytes of `s`, for a buffer write or a copy.
+#[must_use]
+pub fn as_bytes<T: Pod>(s: &[T]) -> &[u8] {
+    // SAFETY: `Pod` guarantees no padding; u8 has alignment 1.
+    unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), core::mem::size_of_val(s)) }
+}
 
 /// Byte-aligned element-wise formats with a natural host type for
 /// [`Stream::upload`](crate::Stream::upload). Other formats go through
@@ -282,11 +310,6 @@ impl Acc for F16 {
 }
 impl Acc for I32 {
     type Scalar = i32;
-}
-
-pub(crate) fn as_bytes<T: Pod>(s: &[T]) -> &[u8] {
-    // SAFETY: `Pod` guarantees no padding; u8 has alignment 1.
-    unsafe { core::slice::from_raw_parts(s.as_ptr().cast(), core::mem::size_of_val(s)) }
 }
 
 pub(crate) fn from_bytes<T: Pod>(b: &[u8]) -> Vec<T> {
@@ -315,5 +338,16 @@ mod tests {
         assert_eq!(<Bfp<M7>>::FORMAT.storage_bytes(32), Some(2 * 17));
         assert_eq!(<Mx<E4M3Fn>>::NAME, "mxfp8e4m3");
         assert_eq!(Bf16::NAME, "bf16");
+    }
+
+    #[test]
+    fn pod_arrays_and_wide_types_view_as_bytes() {
+        let quads: [[u16; 2]; 2] = [[1, 2], [3, 0xFFFF]];
+        assert_eq!(as_bytes(&quads), [1, 0, 2, 0, 3, 0, 0xFF, 0xFF]);
+        assert_eq!(as_bytes(&[1u64, 2]).len(), 16);
+        assert_eq!(as_bytes(&[-1i16]), [0xFF, 0xFF]);
+        assert_eq!(as_bytes(&[1.0f64]), 1.0f64.to_le_bytes());
+        assert_eq!(as_bytes::<[f32; 4]>(&[]), []);
+        assert_eq!(from_bytes::<i64>(as_bytes(&[-7i64, 9])), [-7, 9]);
     }
 }

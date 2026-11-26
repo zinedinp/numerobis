@@ -105,6 +105,7 @@ PROPERTIES = [
     ("QUEUE_FAMILY_PROPERTIES_2", "VkQueueFamilyProperties2"),
     ("QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES", "VkQueueFamilyGlobalPriorityProperties"),
     ("DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO", "VkDeviceQueueGlobalPriorityCreateInfo"),
+    ("HDR_METADATA", "VkHdrMetadataEXT"),
 ]
 
 # Core bits whose extension had no feature struct (being offered was
@@ -542,7 +543,7 @@ def generate(reg, used):
         w(f'    (c"{name}", {depends_rust(parse_depends(dep)) if dep else "Depends::All(&[])"}),')
     w("];")
     w("")
-    w("/// `sType` values of the property, query and create-info structs.")
+    w("/// `sType` values of the property, query, create-info and metadata structs.")
     w("pub(crate) mod s_type {")
     for const, struct in PROPERTIES:
         w(f"    /// `{struct}`.")
