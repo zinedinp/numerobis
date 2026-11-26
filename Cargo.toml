@@ -32,7 +32,7 @@ hip = []
 mock = []
 
 [dependencies]
-miraculix = { version = "^0.7.0", default-features = false }
+miraculix = { version = "^0.7.1", default-features = false }
 keinbonus = { version = "0.1.0", optional = true }
 
 # The raw backends and dma-bufs are Linux kernel UAPI.
@@ -50,6 +50,10 @@ required-features = ["vulkan"]
 [[example]]
 name = "directx_probe"
 required-features = ["directx"]
+
+[[example]]
+name = "hdr_probe"
+required-features = ["vulkan"]
 
 [[example]]
 name = "matrix_probe"

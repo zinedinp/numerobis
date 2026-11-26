@@ -249,7 +249,11 @@ fn copies_are_timed_on_the_gpu_clock() {
         let t = std::time::Instant::now();
         let (back, elapsed) = s.download(&x).unwrap().wait_elapsed().unwrap();
         let wall = t.elapsed();
-        assert!(back.to_vec().iter().all(|v| v.to_bits() == 1.5f32.to_bits()));
+        assert!(
+            back.to_vec()
+                .iter()
+                .all(|v| v.to_bits() == 1.5f32.to_bits())
+        );
         match (e, elapsed) {
             // The host copies itself: nothing for the GPU to time.
             (CopyEngine::Cpu, el) => assert_eq!(el, None),
@@ -283,7 +287,11 @@ fn copies_over_one_gib() {
         let took = t.elapsed();
         let back = back.to_vec();
         assert_eq!(back.len(), n);
-        if let Some(i) = back.iter().zip(&vals).position(|(a, b)| a.to_bits() != b.to_bits()) {
+        if let Some(i) = back
+            .iter()
+            .zip(&vals)
+            .position(|(a, b)| a.to_bits() != b.to_bits())
+        {
             panic!("{e:?}: element {i} differs");
         }
         eprintln!(

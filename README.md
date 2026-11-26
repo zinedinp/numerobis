@@ -503,6 +503,7 @@ capability that is untested on its OS with `(untested on Linux)`.
 | `pci::bar` | tested (Radeon 680M: told apart as integrated, its carve-out counted as CPU-visible, no resizable BAR to speak of) | tested (Intel Arc B580); a 32-bit process gets no ranges (the OS hides them under WOW64, reported as such) |
 | 32-bit x86 (`i686-pc-windows-msvc`) | untested | tested: lib tests, `vulkan_probe`, `directx_probe` (needs miraculix 0.6.5) |
 | `examples/vulkan_probe` loader | tested (`libvulkan.so.1`) | tested (`vulkan-1.dll`) |
+| `examples/hdr_probe` (HDR swapchain) | unavailable (a Win32 window) | tested (B580, Windows HDR on: HDR10 and scRGB presented, `vkSetHdrMetadataEXT`, no validation errors; HLG not offered, falls back to SDR) |
 | `examples/directx_probe` | unavailable (a Windows program; under Wine untested) | tested |
 | `matrix` tables | unit-tested; RDNA 2 (680M) has no cooperative matrix to run | Xe2 tested through Vulkan cooperative matrices (`matrix_probe`: the four reported types bit-exact); other engines untested |
 | `intel::xess`, `examples/xess_probe` | unavailable (XeSS is Windows only) | tested (B580, driver 101.9175) |
@@ -667,6 +668,7 @@ NUMEROBIS_VK_API=1.0 cargo run --example vulkan_probe   # the extension routes i
 cargo run --example bars            # PCIe link, BAR aperture, resizable BAR
 cargo run --release --example matrix_probe --features vulkan   # GEMMs on XMX / Tensor Cores / WMMA
 cargo run --example xess_probe --features directx              # XeSS 2 from the driver (Windows)
+cargo run --example hdr_probe --features vulkan -- scrgb       # HDR10 (default), scrgb, hlg, p3 or sdr in a window (Windows)
 ```
 
 Lints: `Cargo.toml` turns on `clippy::pedantic`; exceptions carry a
