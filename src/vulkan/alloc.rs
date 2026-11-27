@@ -4,8 +4,9 @@
 //! against `maxMemoryAllocationCount`. The host keeps the calls
 //! (`vkAllocateMemory`, `vkBind*Memory`, `vkMapMemory`).
 //!
-//! - [`Usage`] / [`Memory::types_for`]: the memory types for a resource, in
-//!   the order to try them, with the fallbacks when a heap is full.
+//! - [`Usage`] / [`types_for`]: the memory types for a resource, in the
+//!   order to try them, with the fallbacks when a heap is full; straight
+//!   from the `VkMemoryType` flags, or [`Memory::types_for`].
 //! - [`block_size`] / [`dedicated`]: one allocation per block of many
 //!   resources, a large resource on its own.
 //! - [`Block`]: a first-fit range allocator over one allocation, with
@@ -155,38 +156,143 @@ impl Usage {
     }
 }
 
-impl Memory {
-    /// The memory types among `type_bits` (`VkMemoryRequirements::
-    /// memoryTypeBits`) for `usage`, in the order to try them: per step of
-    /// its [`waterfall`](Usage::waterfall), every matching type in the
-    /// device's order, each type once. Every one, not the first per step: a
-    /// full heap (the VRAM, the BAR window) can have a type whose flags the
-    /// next heap's type shares.
-    ///
-    /// Never protected memory or AMD's debug types; `LAZILY_ALLOCATED`
-    /// only for [`Usage::Transient`].
-    #[must_use]
-    pub fn types_for(&self, type_bits: u32, usage: Usage, over_budget: bool) -> Vec<u32> {
-        let mut order = Vec::new();
-        for step in usage.waterfall(over_budget) {
-            let lazy = if step.has & flags::LAZILY_ALLOCATED == 0 {
-                flags::LAZILY_ALLOCATED
-            } else {
-                0
-            };
-            let lacks = step.lacks | flags::PROTECTED | AMD_DEBUG | lazy;
-            for (i, t) in (0u32..).zip(&self.types) {
-                if i < 32
-                    && type_bits & (1 << i) != 0
-                    && t.has(step.has)
-                    && t.flags & lacks == 0
-                    && !order.contains(&i)
-                {
-                    order.push(i);
-                }
+/// The memory types among `type_bits` (`VkMemoryRequirements::
+/// memoryTypeBits`) for `usage`, in the order to try them: per step of its
+/// [`waterfall`](Usage::waterfall), every matching type in the device's
+/// order, each type once. Every one, not the first per step: a full heap
+/// (the VRAM, the BAR window) can have a type whose flags the next heap's
+/// type shares.
+///
+/// `type_flags` is `propertyFlags` of each `VkMemoryType`, in the device's
+/// order; past 32 types, the rest are ignored, as `type_bits` can't name
+/// them. A host keeps its own `VkPhysicalDeviceMemoryProperties` and asks
+/// without building a [`Memory`] or allocating (with ash,
+/// `props.memory_types_as_slice().iter().map(|t| t.property_flags.as_raw())`).
+///
+/// Never protected memory or AMD's debug types; `LAZILY_ALLOCATED` only
+/// for [`Usage::Transient`].
+///
+/// ```
+/// use numerobis::vulkan::alloc::{Usage, types_for};
+/// use numerobis::vulkan::memory::flags::*;
+///
+/// let host = HOST_VISIBLE | HOST_COHERENT;
+/// let types = [DEVICE_LOCAL, host, DEVICE_LOCAL | host];
+/// assert_eq!(types_for(types, 0b111, Usage::Upload, false), [2, 1]);
+/// assert_eq!(types_for(types, 0b111, Usage::Staging, false), [1, 2]);
+/// ```
+#[must_use]
+pub fn types_for(
+    type_flags: impl IntoIterator<Item = u32>,
+    type_bits: u32,
+    usage: Usage,
+    over_budget: bool,
+) -> TypeOrder {
+    let mut all = [0u32; 32];
+    let mut count = 0;
+    for (slot, flags) in all.iter_mut().zip(type_flags) {
+        *slot = flags;
+        count += 1;
+    }
+    let mut order = TypeOrder {
+        types: [0; 32],
+        len: 0,
+    };
+    let mut taken = 0u32;
+    for step in usage.waterfall(over_budget) {
+        let lazy = if step.has & flags::LAZILY_ALLOCATED == 0 {
+            flags::LAZILY_ALLOCATED
+        } else {
+            0
+        };
+        let lacks = step.lacks | flags::PROTECTED | AMD_DEBUG | lazy;
+        for (i, &flags) in (0u32..).zip(&all[..count]) {
+            let bit = 1 << i;
+            if type_bits & !taken & bit != 0 && flags & step.has == step.has && flags & lacks == 0 {
+                taken |= bit;
+                order.types[order.len()] = i;
+                order.len += 1;
             }
         }
-        order
+    }
+    order
+}
+
+impl Memory {
+    /// [`types_for`] over this device's types.
+    #[must_use]
+    pub fn types_for(&self, type_bits: u32, usage: Usage, over_budget: bool) -> TypeOrder {
+        types_for(
+            self.types.iter().map(|t| t.flags),
+            type_bits,
+            usage,
+            over_budget,
+        )
+    }
+}
+
+/// What [`types_for`] returns: memory type indices in the order to try,
+/// at most 32, without a heap allocation. A slice through `Deref`, and it
+/// iterates by value.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TypeOrder {
+    types: [u32; 32],
+    len: u8,
+}
+
+impl std::ops::Deref for TypeOrder {
+    type Target = [u32];
+
+    fn deref(&self) -> &[u32] {
+        &self.types[..usize::from(self.len)]
+    }
+}
+
+impl std::fmt::Debug for TypeOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(&**self).finish()
+    }
+}
+
+impl IntoIterator for TypeOrder {
+    type Item = u32;
+    type IntoIter = std::iter::Take<std::array::IntoIter<u32, 32>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.types.into_iter().take(usize::from(self.len))
+    }
+}
+
+impl<'a> IntoIterator for &'a TypeOrder {
+    type Item = &'a u32;
+    type IntoIter = std::slice::Iter<'a, u32>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<const N: usize> PartialEq<[u32; N]> for TypeOrder {
+    fn eq(&self, other: &[u32; N]) -> bool {
+        **self == *other
+    }
+}
+
+impl PartialEq<[u32]> for TypeOrder {
+    fn eq(&self, other: &[u32]) -> bool {
+        **self == *other
+    }
+}
+
+impl PartialEq<&[u32]> for TypeOrder {
+    fn eq(&self, other: &&[u32]) -> bool {
+        **self == **other
+    }
+}
+
+impl PartialEq<Vec<u32>> for TypeOrder {
+    fn eq(&self, other: &Vec<u32>) -> bool {
+        **self == **other
     }
 }
 
@@ -535,6 +641,32 @@ mod tests {
         assert_eq!(m.types_for(all, Usage::Device, true), [2, 3, 0, 1, 4]);
         assert_eq!(m.types_for(all, Usage::Upload, true), [2, 3, 4]);
         assert_eq!(m.types_for(all, Usage::Staging, true), [2, 3, 4]);
+    }
+
+    #[test]
+    fn the_flags_alone_give_the_same_order_and_32_types_at_most() {
+        let m = arc();
+        let flags: Vec<u32> = m.types.iter().map(|t| t.flags).collect();
+        for usage in [
+            Usage::Device,
+            Usage::DeviceMapped,
+            Usage::Upload,
+            Usage::Staging,
+            Usage::Readback,
+            Usage::Transient,
+        ] {
+            for over in [false, true] {
+                let order = types_for(flags.iter().copied(), 0b1_1111, usage, over);
+                assert_eq!(order, m.types_for(0b1_1111, usage, over));
+            }
+        }
+        // 40 VRAM types: type 31 is the last one `memoryTypeBits` names.
+        let many = types_for([DL; 40], u32::MAX, Usage::Device, false);
+        assert_eq!(many.len(), 32);
+        assert_eq!(many.last(), Some(&31));
+        assert_eq!(many.into_iter().sum::<u32>(), (0..32).sum());
+        assert_eq!(types_for([DL; 40], 1 << 31, Usage::Device, false), [31]);
+        assert!(types_for([], u32::MAX, Usage::Device, false).is_empty());
     }
 
     #[test]

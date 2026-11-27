@@ -11,13 +11,6 @@ images take their memory types from `Memory::types_for`, its textures share
 `alloc::Block`s (575 live allocations down to 63 in its bench), and its
 swapchains take `swapchain`'s and `format::depth`'s choices.
 
-## What Melon found missing
-
-- **`types_for` without a `Memory` per call.** `Memory::from_properties`
-  builds two `Vec`s, and a host converts again for every buffer and image.
-  A borrowed view over `VkPhysicalDeviceMemoryProperties` (or `types_for`
-  on the raw struct) would do without.
-
 ## Found in majestix-vk
 
 Logic `majestix-vk` keeps on ash types that is data plus logic, as
