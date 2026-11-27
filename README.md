@@ -230,8 +230,8 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   GPU; an NPU or another GPU has its own scheduler and doesn't see it.
 - `vulkan::alloc`: memory sub-allocation as logic, the host keeping
   `vkAllocateMemory` and the binds: the memory types per `Usage` (device,
-  device mapped, upload, readback, transient) in fallback order, host
-  memory first past the VRAM budget; block size per heap; `Block`, a
+  device mapped, upload, staging, readback, transient) in fallback order,
+  host memory first past the VRAM budget; block size per heap; `Block`, a
   first-fit range allocator with alignment and `bufferImageGranularity`;
   `AllocationCount` against `maxMemoryAllocationCount`.
 - `vulkan::swapchain`: present mode per `Pacing` (vsync, low latency,

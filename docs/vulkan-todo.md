@@ -13,17 +13,10 @@ swapchains take `swapchain`'s and `format::depth`'s choices.
 
 ## What Melon found missing
 
-- **A `Usage::Staging`.** A buffer the CPU writes once and a copy reads
-  (texture and mesh uploads) wants host memory first, so the BAR window
-  stays for `Upload`. Melon asks for `Upload` with `over_budget: true`,
-  which gives that order but says something else.
 - **`types_for` without a `Memory` per call.** `Memory::from_properties`
   builds two `Vec`s, and a host converts again for every buffer and image.
   A borrowed view over `VkPhysicalDeviceMemoryProperties` (or `types_for`
   on the raw struct) would do without.
-- **`SurfaceCapabilities` from ash's struct.** Melon copies the ten fields
-  by hand rather than call the unsafe `from_raw`; a `From` in `majestix-vk`
-  takes that off every host.
 
 ## Found in majestix-vk
 

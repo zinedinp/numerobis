@@ -79,10 +79,16 @@ pub enum Usage {
     /// that [`Upload`](Self::Upload) needs.
     DeviceMapped,
     /// The CPU writes it through a mapping and the GPU reads it every
-    /// frame (uniforms, per-frame instances, staging): VRAM it maps, else
-    /// host memory. Write-combined either way: written in order, never
-    /// read.
+    /// frame (uniforms, per-frame instances): VRAM it maps, else host
+    /// memory. Write-combined either way: written in order, never read.
+    /// A buffer only a copy reads is [`Staging`](Self::Staging).
     Upload,
+    /// The CPU writes it once through a mapping and a copy reads it
+    /// (texture and mesh uploads): host memory, uncached (write-combined)
+    /// before cached, so the BAR window stays for [`Upload`](Self::Upload);
+    /// mapped VRAM only where there is no host memory (unified memory) or
+    /// it is full. The same past the VRAM budget, as it never wants VRAM.
+    Staging,
     /// The GPU writes it and the CPU reads it back (queries, screenshots,
     /// occlusion results): cached host memory, as reading write-combined
     /// memory costs the CPU many times more.
@@ -122,6 +128,14 @@ impl Usage {
             has: HOST,
             lacks: DL,
         };
+        const HOST_UNCACHED: Want = Want {
+            has: HOST,
+            lacks: DL | flags::HOST_CACHED,
+        };
+        const MAPPED_UNCACHED: Want = Want {
+            has: HOST,
+            lacks: flags::HOST_CACHED,
+        };
         const CACHED: Want = Want {
             has: HOST | flags::HOST_CACHED,
             lacks: 0,
@@ -134,6 +148,7 @@ impl Usage {
             (Self::DeviceMapped, false) => &[VRAM_MAPPED, VRAM, MAPPED],
             (Self::Upload, false) => &[VRAM_MAPPED, MAPPED],
             (Self::Upload, true) => &[HOST_ONLY, MAPPED],
+            (Self::Staging, _) => &[HOST_UNCACHED, HOST_ONLY, MAPPED_UNCACHED, MAPPED],
             (Self::Readback, _) => &[CACHED, HOST_ONLY, MAPPED],
             (Self::Transient, _) => &[LAZY, VRAM],
         }
@@ -512,12 +527,32 @@ mod tests {
             [4, 0, 1, 2, 3]
         );
         assert_eq!(m.types_for(all, Usage::Upload, false), [4, 2, 3]);
+        assert_eq!(m.types_for(all, Usage::Staging, false), [2, 3, 4]);
         assert_eq!(m.types_for(all, Usage::Readback, false), [3, 2, 4]);
         assert_eq!(m.types_for(all, Usage::Transient, false), [0, 1, 4]);
         // Past the budget: host memory first, and not the BAR type, which
         // is VRAM too.
         assert_eq!(m.types_for(all, Usage::Device, true), [2, 3, 0, 1, 4]);
         assert_eq!(m.types_for(all, Usage::Upload, true), [2, 3, 4]);
+        assert_eq!(m.types_for(all, Usage::Staging, true), [2, 3, 4]);
+    }
+
+    #[test]
+    fn staging_takes_uncached_host_memory_first() {
+        // The cached host type listed before the uncached one.
+        let m = memory(
+            &[(8 << 30, true), (16 << 30, false), (256 << 20, true)],
+            &[(DL, 0), (CACHED, 1), (HOST, 1), (DL | HOST, 2)],
+        );
+        assert_eq!(m.types_for(0b1111, Usage::Staging, false), [2, 1, 3]);
+        // The host types can't hold the buffer: the BAR.
+        assert_eq!(m.types_for(0b1001, Usage::Staging, false), [3]);
+        // Unified memory: every type is VRAM, uncached before cached.
+        let uma = memory(
+            &[(16 << 30, true)],
+            &[(DL, 0), (DL | CACHED, 0), (DL | HOST, 0)],
+        );
+        assert_eq!(uma.types_for(0b111, Usage::Staging, false), [2, 1]);
     }
 
     #[test]
