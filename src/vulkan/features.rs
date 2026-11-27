@@ -12,8 +12,8 @@ use super::ApiVersion;
 
 mod generated;
 
-pub(crate) use generated::s_type;
 pub use generated::{CORE_1_0, CORE_1_1, CORE_1_2, CORE_1_3, CORE_1_4, Chain, VERSIONS};
+pub(crate) use generated::{s_type, sync2};
 
 /// One `VkBool32` feature member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

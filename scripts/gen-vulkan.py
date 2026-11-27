@@ -8,8 +8,10 @@ vk.xml is `xml/vk.xml` of KhronosGroup/Vulkan-Docs (or `registry/vk.xml` of
 Vulkan-Headers). From it come, for the structs listed in CHAINS: their
 `sType`, members in declaration order, which version struct absorbed them and
 when, the extension each core bit came from, and per version the extensions
-it promoted. The script also checks that every `c"VK_..."` name under
-src/vulkan is an extension the registry knows.
+it promoted. From its `<sync>` block comes the `synchronization2` lowering:
+which legacy stage or access holds each bit `VkPipelineStageFlagBits2` and
+`VkAccessFlagBits2` added. The script also checks that every `c"VK_..."` name
+under src/vulkan is an extension the registry knows.
 
 Only the standard library is used; the output goes through rustfmt.
 """
@@ -120,6 +122,13 @@ FROM_OVERRIDES = {
     "pushDescriptor": "VK_KHR_push_descriptor",
 }
 
+# kind -> (64-bit enum, the legacy 32-bit enum, <sync> tag).
+SYNC = {
+    "stage": ("VkPipelineStageFlagBits2", "VkPipelineStageFlagBits", "syncstage"),
+    "access": ("VkAccessFlagBits2", "VkAccessFlagBits", "syncaccess"),
+}
+BITMASKS = {e for k in SYNC.values() for e in k[:2]}
+
 
 def fail(msg):
     sys.exit(f"gen-vulkan: {msg}")
@@ -155,10 +164,15 @@ class Registry:
                 self.structs[t.get("name")] = t
         self.s_types = {}
         self.s_type_aliases = {}
+        self.bits = {name: {} for name in BITMASKS}  # enum -> {bit name: value}
+        self.bit_aliases = {name: {} for name in BITMASKS}
         for enums in root.findall("enums"):
             if enums.get("name") == "VkStructureType":
                 for e in enums.findall("enum"):
                     self._enum(e, None, core=True)
+            elif enums.get("name") in BITMASKS:
+                for e in enums.findall("enum"):
+                    self._bit(e, enums.get("name"))
         self.versions = {}  # "1_1" -> set of struct names it introduced
         for feat in root.findall("feature"):
             # VK_VERSION_1_x, and since 1.4.3xx also VK_{BASE,COMPUTE,GRAPHICS}_VERSION_1_x.
@@ -170,6 +184,7 @@ class Registry:
                     continue
                 for e in req.findall("enum"):
                     self._enum(e, None)
+                    self._bit(e, e.get("extends"))
                 for t in req.findall("type"):
                     types.add(t.get("name"))
         self.extensions = {}
@@ -182,6 +197,7 @@ class Registry:
                     continue
                 for e in req.findall("enum"):
                     self._enum(e, number)
+                    self._bit(e, e.get("extends"))
                 for t in req.findall("type"):
                     types.add(t.get("name"))
             self.extensions[ext.get("name")] = {
@@ -191,6 +207,38 @@ class Registry:
                 "depends": ext.get("depends"),
                 "types": {self.resolve(t) for t in types},
             }
+        # <sync>: kind -> {name: (legacy alias or None, [equivalent names] or None)}.
+        self.sync = {kind: {} for kind in SYNC}
+        node = root.find("sync")
+        if node is None:
+            fail("vk.xml has no <sync> block (older than header 1.3.233?)")
+        for kind, (_, _, tag) in SYNC.items():
+            for s in node.findall(tag):
+                if not for_vulkan(s):
+                    continue
+                equivalent = [q for q in s.findall("syncequivalent") if for_vulkan(q)]
+                names = None
+                if equivalent:
+                    names = [n for q in equivalent for n in q.get(kind).split(",")]
+                self.sync[kind][s.get("name")] = (s.get("alias"), names)
+
+    def _bit(self, e, enum):
+        if enum not in BITMASKS or not for_vulkan(e):
+            return
+        name = e.get("name")
+        if e.get("alias"):
+            self.bit_aliases[enum][name] = e.get("alias")
+        elif e.get("bitpos") is not None:
+            self.bits[enum][name] = 1 << int(e.get("bitpos"))
+        elif e.get("value") is not None:
+            self.bits[enum][name] = int(e.get("value"), 0)
+
+    def bit(self, enum, name):
+        while name in self.bit_aliases[enum]:
+            name = self.bit_aliases[enum][name]
+        if name not in self.bits[enum]:
+            fail(f"{name} is not a {enum} bit")
+        return self.bits[enum][name]
 
     def _enum(self, e, extnumber, core=False):
         if not core and e.get("extends") != "VkStructureType" or not for_vulkan(e):
@@ -350,6 +398,119 @@ def version_tuple(v):
 
 def dotted(v):
     return v.replace("_", ".")
+
+
+def short(name):
+    """`VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_COPY_BIT_KHR` -> `ACCELERATION_STRUCTURE_COPY_KHR`."""
+    name = re.sub(r"^VK_(PIPELINE_STAGE|ACCESS)_(2_)?", "", name)
+    return re.sub(r"_BIT(?=_|$)", "", name)
+
+
+def hex_rust(value):
+    digits = f"{value:X}"
+    groups = []
+    while digits:
+        groups.insert(0, digits[-4:])
+        digits = digits[:-4]
+    return "0x" + "_".join(groups)
+
+
+def lowering(reg, kind):
+    """The legacy mask and the rows (new bits, legacy bits they lower to) for `kind`.
+
+    A new bit lowers to the smallest legacy bit whose `syncequivalent` lists it
+    (`COPY` is in `TRANSFER`); else to what its own `syncequivalent` lowers to
+    (`PRE_RASTERIZATION_SHADERS`), with bits a legacy meta bit in the result
+    already holds folded into it; else it has no row, and the code widens it
+    to the widest legacy bit.
+    """
+    wide_enum, legacy_enum, _ = SYNC[kind]
+    legacy = 0
+    for value in reg.bits[legacy_enum].values():
+        legacy |= value
+    wide_values = set(reg.bits[wide_enum].values())
+    for name, value in reg.bits[legacy_enum].items():
+        if value not in wide_values:
+            fail(f"{legacy_enum} {name} ({value:#x}) has no {wide_enum} bit")
+
+    names = {}  # value -> canonical name, for comments
+    for name, value in reg.bits[wide_enum].items():
+        if value in names:
+            fail(f"{wide_enum}: {names[value]} and {name} share {value:#x}")
+        names[value] = name
+
+    def is_legacy(value):
+        return value != 0 and value & ~legacy == 0
+
+    equivalent = {}  # value -> [member values]
+    for name, (alias, members) in reg.sync[kind].items():
+        value = reg.bit(wide_enum, name)
+        if alias is not None and reg.bit(legacy_enum, alias) != value:
+            fail(f"<sync> {name} and its alias {alias} differ")
+        if members is not None:
+            equivalent[value] = [reg.bit(wide_enum, m) for m in members]
+
+    def closure(value, seen=None):
+        seen = set() if seen is None else seen
+        for m in equivalent.get(value, []):
+            if m not in seen:
+                seen.add(m)
+                closure(m, seen)
+        return seen
+
+    homes = {}  # new value -> legacy values whose equivalence lists it
+    for value, members in equivalent.items():
+        if is_legacy(value):
+            for m in members:
+                if not is_legacy(m):
+                    homes.setdefault(m, []).append(value)
+
+    def fold(bits):
+        for meta in equivalent:
+            if is_legacy(meta) and bits & meta:
+                for m in closure(meta):
+                    if is_legacy(m) and m != meta:
+                        bits &= ~m
+        return bits
+
+    def lower(value, stack=()):
+        if is_legacy(value):
+            return value
+        if value in stack:
+            fail(f"<sync> {names[value]}: equivalences loop")
+        if value in homes:
+            best = min(homes[value], key=lambda h: len(closure(h)))
+            for h in homes[value]:
+                if not closure(best) <= closure(h):
+                    fail(f"{names[value]}: in {names[best]} and {names[h]}, neither holds the other")
+            return best
+        if value in equivalent:
+            out = 0
+            for m in equivalent[value]:
+                lowered = lower(m, (*stack, value))
+                if lowered is None:
+                    return None
+                out |= lowered
+            return fold(out)
+        return None
+
+    rows = {}  # legacy value -> [new values]
+    for value in sorted(names):
+        if value == 0 or is_legacy(value):
+            continue
+        lowered = lower(value)
+        if lowered is not None:
+            rows.setdefault(lowered, []).append(value)
+    out = []
+    for target, sources in sorted(rows.items()):
+        mask = 0
+        for s in sources:
+            mask |= s
+        targets = [n for n, v in reg.bits[legacy_enum].items() if v & target]
+        comment = (", ".join(short(names[s]) for s in sources) + ": "
+                   + " | ".join(short(t) for t in targets))
+        out.append((mask, target, comment))
+    return legacy, out
 
 
 def generate(reg, used):
@@ -548,6 +709,24 @@ def generate(reg, used):
     for const, struct in PROPERTIES:
         w(f"    /// `{struct}`.")
         w(f"    pub const {const}: i32 = {reg.s_type(struct):_};")
+    w("}")
+    w("")
+    w("/// The `synchronization2` lowering, from the registry's `<sync>` equivalences.")
+    w("pub(crate) mod sync2 {")
+    for kind, (wide_enum, legacy_enum, _) in SYNC.items():
+        legacy, rows = lowering(reg, kind)
+        plural = {"stage": "STAGES", "access": "ACCESSES"}[kind]
+        w(f"    /// Every `{legacy_enum}` bit: the same values in `{wide_enum}`.")
+        w(f"    pub const LEGACY_{plural}: u64 = {hex_rust(legacy)};")
+        w("")
+        w(f"    /// `{wide_enum}` bits `{legacy_enum}` lacks, and the legacy bits that hold them.")
+        w(f"    pub const {plural}: &[(u64, u32)] = &[")
+        for mask, target, comment in rows:
+            w(f"        // {comment}")
+            w(f"        ({hex_rust(mask)}, {hex_rust(target)}),")
+        w("    ];")
+        if kind == "stage":
+            w("")
     w("}")
     w("")
     w("/// Every instance extension: enabled at `vkCreateInstance`, never at")

@@ -1879,6 +1879,33 @@ pub(crate) mod s_type {
     pub const HDR_METADATA: i32 = 1_000_105_000;
 }
 
+/// The `synchronization2` lowering, from the registry's `<sync>` equivalences.
+pub(crate) mod sync2 {
+    /// Every `VkPipelineStageFlagBits` bit: the same values in `VkPipelineStageFlagBits2`.
+    pub const LEGACY_STAGES: u64 = 0x3FF_FFFF;
+
+    /// `VkPipelineStageFlagBits2` bits `VkPipelineStageFlagBits` lacks, and the legacy bits that hold them.
+    pub const STAGES: &[(u64, u32)] = &[
+        // INDEX_INPUT, VERTEX_ATTRIBUTE_INPUT: VERTEX_INPUT
+        (0x30_0000_0000, 0x4),
+        // ACCELERATION_STRUCTURE_COPY_KHR, COPY, RESOLVE, BLIT, CLEAR: TRANSFER
+        (0xF_1000_0000, 0x1000),
+        // PRE_RASTERIZATION_SHADERS, SUBPASS_SHADER_HUAWEI, INVOCATION_MASK_HUAWEI, CLUSTER_CULLING_SHADER_HUAWEI: ALL_GRAPHICS
+        (0x3C0_0000_0000, 0x8000),
+    ];
+
+    /// Every `VkAccessFlagBits` bit: the same values in `VkAccessFlagBits2`.
+    pub const LEGACY_ACCESSES: u64 = 0xFFF_FFFF;
+
+    /// `VkAccessFlagBits2` bits `VkAccessFlagBits` lacks, and the legacy bits that hold them.
+    pub const ACCESSES: &[(u64, u32)] = &[
+        // SHADER_SAMPLED_READ, SHADER_STORAGE_READ, SHADER_BINDING_TABLE_READ_KHR, SHADER_TILE_ATTACHMENT_READ_QCOM: SHADER_READ
+        (0x8_0103_0000_0000, 0x20),
+        // SHADER_STORAGE_WRITE, SHADER_TILE_ATTACHMENT_WRITE_QCOM: SHADER_WRITE
+        (0x10_0004_0000_0000, 0x40),
+    ];
+}
+
 /// Every instance extension: enabled at `vkCreateInstance`, never at
 /// `vkCreateDevice`.
 pub(super) const INSTANCE_EXTENSIONS: &[&CStr] = &[

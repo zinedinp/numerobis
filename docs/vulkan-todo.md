@@ -11,19 +11,6 @@ images take their memory types from `Memory::types_for`, its textures share
 `alloc::Block`s (575 live allocations down to 63 in its bench), and its
 swapchains take `swapchain`'s and `format::depth`'s choices.
 
-## Found in majestix-vk
-
-Logic `majestix-vk` keeps on ash types that is data plus logic, as
-`numerobis::vulkan` is:
-
-- **`format::block`.** Bytes and texels of one block per aspect, for copy
-  bounds. Beside `aspect_mask`, on `u32` formats, other hosts get it
-  without ash.
-- **The `synchronization2` lowering** (`barrier::legacy_stages`,
-  `legacy_access`, `legacy_layout`): which legacy bit contains each new
-  one. A table the generator could emit from `vk.xml`, next to the
-  capability tables.
-
 ## Colour
 
 - **What the display makes of it.** `examples/hdr_probe` presents HDR10
@@ -94,25 +81,16 @@ PRs.
 
 ### Open
 
+What majestix needs on its own side is in its `TODO.md`; here what
+touches numerobis:
+
 - **Generated wrappers for the remaining calls** (step 4):
   `scripts/gen-vulkan.py` writes them into majestix's `src/generated.rs`
   from the same `vk.xml` pass (each command's parent handle and its
   `externsync` parameters). Melon moves to them module by module (`gfx`
   first, then `renderer`) and drops its `unsafe` blocks as it goes.
-- **Descriptor sets.** `bind_descriptor_sets` takes raw sets and is
-  `unsafe`: a set names handles indirectly, so binding a set whose buffer
-  was retired is not caught. Sets that keep their handles' ids and check
-  them at bind would close it.
-- **Pipeline creation.** Pipelines are created raw (from
-  `Pass::pipeline_target`) and adopted; typed builders come with the
-  generated wrappers.
-- **Swapchain.** Swapchains and their images are adopted; acquire and
-  present stay raw (`Queue::with_raw`).
-- **Sub-allocation.** Each buffer and image gets its own `vkAllocateMemory`;
-  `alloc::Block` per block is next, as `maxMemoryAllocationCount` is 4096
-  on Windows.
-- **Draw-count indirect and timeline semaphores**, routed by the plan like
-  the barriers.
+- **Timeline semaphores**, routed by the plan like the barriers: majestix
+  has binary semaphores and fences only.
 - **Image layouts between passes** stay the host's job (correctness, not
   memory safety); a declarative pass list (which pass reads and writes
   what) could derive them later.

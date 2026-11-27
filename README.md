@@ -247,7 +247,8 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   bounds of a buffer-image copy.
 - `vulkan::barrier`: `synchronization2`'s stages, accesses and layouts
   lowered to `vkCmdPipelineBarrier`'s for a device without it, each new
-  bit widened to the legacy bits that contain it (`STAGES`, `ACCESSES`).
+  bit widened to the legacy bits that contain it (`STAGES`, `ACCESSES`,
+  generated from `vk.xml`'s `<sync>` equivalences).
 - `vulkan::color_space`: every `VkColorSpaceKHR` as a keinbonus description
   (primaries and curve, checked against Vulkan's table; DCI-P3 non-linear is
   XYZ with ST 428's curve; Adobe RGB has chromaticities but no H.273 code
@@ -344,7 +345,8 @@ and their dependencies are the ones exercised.
 
 ### Regenerating the tables
 
-`src/vulkan/features/generated.rs` comes from the Vulkan registry
+`src/vulkan/features/generated.rs` (the feature tables, and the
+`synchronization2` lowering `barrier` uses) comes from the Vulkan registry
 (`xml/vk.xml` of [Vulkan-Docs](https://github.com/KhronosGroup/Vulkan-Docs),
 `registry/vk.xml` of Vulkan-Headers, or `share/vulkan/registry/vk.xml` of
 the Vulkan SDK); its header records the version. To add a struct, list it in

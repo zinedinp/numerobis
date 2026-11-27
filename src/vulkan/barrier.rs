@@ -4,9 +4,14 @@
 //!
 //! The 1.0 bits keep their values in the 64-bit masks; each bit
 //! `synchronization2` added widens to the legacy bits that contain it
-//! ([`STAGES`], [`ACCESSES`]), and any other new bit to the widest legacy
-//! one (`ALL_COMMANDS`, `MEMORY_READ | MEMORY_WRITE`), which is correct,
-//! only slower.
+//! ([`STAGES`], [`ACCESSES`], from `vk.xml`'s `<sync>` equivalences), and
+//! any other new bit to the widest legacy one (`ALL_COMMANDS`,
+//! `MEMORY_READ | MEMORY_WRITE`), which is correct, only slower.
+//!
+//! `PRE_RASTERIZATION_SHADERS` becomes `ALL_GRAPHICS`: the stages it
+//! stands for (vertex, tessellation, geometry, task, mesh) may only be
+//! named in a 1.0 barrier when their features are enabled, and HUAWEI's
+//! cluster culling stage has no legacy bit but `ALL_GRAPHICS`.
 //!
 //! ```
 //! use numerobis::vulkan::barrier::{self, access, access2, layout, stage, stage2};
@@ -18,6 +23,7 @@
 //! assert_eq!(barrier::layout(layout::ATTACHMENT_OPTIMAL, color), layout::COLOR_ATTACHMENT_OPTIMAL);
 //! ```
 
+use super::features::sync2;
 use super::format::aspect;
 
 /// `VkPipelineStageFlagBits`: the ones the lowering names.
@@ -30,10 +36,11 @@ pub mod stage {
     pub const GEOMETRY_SHADER: u32 = 0x40;
     pub const TRANSFER: u32 = 0x1000;
     pub const BOTTOM_OF_PIPE: u32 = 0x2000;
+    pub const ALL_GRAPHICS: u32 = 0x8000;
     pub const ALL_COMMANDS: u32 = 0x1_0000;
-    /// Bits 0 to 25: every bit 1.0 and its extensions name, the same
-    /// values in `VkPipelineStageFlags2`.
-    pub const LEGACY: u64 = 0x03FF_FFFF;
+    /// Every bit 1.0 and its extensions name (bits 0 to 25), the same
+    /// values in `VkPipelineStageFlags2`. From `vk.xml`.
+    pub const LEGACY: u64 = super::sync2::LEGACY_STAGES;
 }
 
 /// `VkPipelineStageFlagBits2` that `synchronization2` added: the ones the
@@ -54,9 +61,9 @@ pub mod access {
     pub const SHADER_WRITE: u32 = 0x40;
     pub const MEMORY_READ: u32 = 0x8000;
     pub const MEMORY_WRITE: u32 = 0x1_0000;
-    /// Bits 0 to 27: every bit 1.0 and its extensions name, the same
-    /// values in `VkAccessFlags2`.
-    pub const LEGACY: u64 = 0x0FFF_FFFF;
+    /// Every bit 1.0 and its extensions name (bits 0 to 27), the same
+    /// values in `VkAccessFlags2`. From `vk.xml`.
+    pub const LEGACY: u64 = super::sync2::LEGACY_ACCESSES;
 }
 
 /// `VkAccessFlagBits2` that `synchronization2` added: the ones the
@@ -79,33 +86,13 @@ pub mod layout {
     pub const ATTACHMENT_OPTIMAL: u32 = 1_000_314_001;
 }
 
-/// The new stages and the legacy ones that contain them.
-pub const STAGES: [(u64, u32); 3] = [
-    (
-        stage2::COPY | stage2::RESOLVE | stage2::BLIT | stage2::CLEAR,
-        stage::TRANSFER,
-    ),
-    (
-        stage2::INDEX_INPUT | stage2::VERTEX_ATTRIBUTE_INPUT,
-        stage::VERTEX_INPUT,
-    ),
-    (
-        stage2::PRE_RASTERIZATION_SHADERS,
-        stage::VERTEX_SHADER
-            | stage::TESSELLATION_CONTROL_SHADER
-            | stage::TESSELLATION_EVALUATION_SHADER
-            | stage::GEOMETRY_SHADER,
-    ),
-];
+/// The new stages and the legacy ones that contain them, generated from
+/// `vk.xml`. No two rows share a new bit.
+pub const STAGES: &[(u64, u32)] = sync2::STAGES;
 
-/// The new accesses and the legacy ones that contain them.
-pub const ACCESSES: [(u64, u32); 2] = [
-    (
-        access2::SHADER_SAMPLED_READ | access2::SHADER_STORAGE_READ,
-        access::SHADER_READ,
-    ),
-    (access2::SHADER_STORAGE_WRITE, access::SHADER_WRITE),
-];
+/// The new accesses and the legacy ones that contain them, generated from
+/// `vk.xml`. No two rows share a new bit.
+pub const ACCESSES: &[(u64, u32)] = sync2::ACCESSES;
 
 /// `bits` without the new ones `table` names, and the legacy bits they
 /// widen to.
@@ -130,7 +117,7 @@ const fn widen(bits: u64, table: &[(u64, u32)]) -> (u64, u32) {
 #[must_use]
 pub const fn stages(stages: u64, src: bool) -> u32 {
     let shared = (stages & stage::LEGACY) as u32;
-    let (rest, wide) = widen(stages & !stage::LEGACY, &STAGES);
+    let (rest, wide) = widen(stages & !stage::LEGACY, STAGES);
     let mut out = shared | wide;
     if rest != 0 {
         out |= stage::ALL_COMMANDS;
@@ -149,7 +136,7 @@ pub const fn stages(stages: u64, src: bool) -> u32 {
 #[must_use]
 pub const fn accesses(accesses: u64) -> u32 {
     let shared = (accesses & access::LEGACY) as u32;
-    let (rest, wide) = widen(accesses & !access::LEGACY, &ACCESSES);
+    let (rest, wide) = widen(accesses & !access::LEGACY, ACCESSES);
     let mut out = shared | wide;
     if rest != 0 {
         out |= access::MEMORY_READ | access::MEMORY_WRITE;
@@ -190,14 +177,43 @@ mod tests {
     fn new_stages_widen() {
         assert_eq!(stages(stage2::COPY | stage2::BLIT, true), stage::TRANSFER);
         assert_eq!(stages(stage2::INDEX_INPUT, false), stage::VERTEX_INPUT);
-        let pre = stages(stage2::PRE_RASTERIZATION_SHADERS, true);
-        assert_eq!(pre & stage::GEOMETRY_SHADER, stage::GEOMETRY_SHADER);
+        // No feature-gated stage (geometry, tessellation, mesh) in a 1.0 mask.
+        assert_eq!(
+            stages(stage2::PRE_RASTERIZATION_SHADERS, true),
+            stage::ALL_GRAPHICS
+        );
+        // ACCELERATION_STRUCTURE_COPY_KHR, below bit 32 but not legacy.
+        assert_eq!(stages(0x1000_0000, true), stage::TRANSFER);
         // VIDEO_DECODE_KHR: no legacy bit holds it.
         assert_eq!(stages(0x400_0000, true), stage::ALL_COMMANDS);
         assert_eq!(
             stages(stage2::CLEAR | 0x400_0000, true),
             stage::TRANSFER | stage::ALL_COMMANDS
         );
+    }
+
+    #[test]
+    fn tables_are_new_bits_to_legacy_ones() {
+        for (table, legacy) in [(STAGES, stage::LEGACY), (ACCESSES, access::LEGACY)] {
+            let mut seen = 0;
+            for &(from, to) in table {
+                assert_eq!(from & legacy, 0, "{from:#x} holds legacy bits");
+                assert_eq!(from & seen, 0, "{from:#x} is in two rows");
+                assert_ne!(to, 0);
+                assert_eq!(u64::from(to) & !legacy, 0, "{to:#x} is not legacy");
+                seen |= from;
+            }
+        }
+        // The bits the named constants say are new.
+        let named = stage2::COPY
+            | stage2::RESOLVE
+            | stage2::BLIT
+            | stage2::CLEAR
+            | stage2::INDEX_INPUT
+            | stage2::VERTEX_ATTRIBUTE_INPUT
+            | stage2::PRE_RASTERIZATION_SHADERS;
+        let all = STAGES.iter().fold(0, |m, &(from, _)| m | from);
+        assert_eq!(all & named, named);
     }
 
     #[test]
@@ -216,6 +232,8 @@ mod tests {
             accesses(access2::SHADER_STORAGE_WRITE),
             access::SHADER_WRITE
         );
+        // SHADER_BINDING_TABLE_READ_KHR.
+        assert_eq!(accesses(0x100_0000_0000), access::SHADER_READ);
         // DESCRIPTOR_BUFFER_READ_EXT.
         assert_eq!(
             accesses(0x200_0000_0000),
