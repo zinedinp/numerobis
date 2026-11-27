@@ -242,7 +242,12 @@ Vulkan bindings, the host makes the calls with its own (ash, vulkanalia,
   from the renderer's wishes, each in its colour space and its formats
   (10:10:10:2 before 16-bit float, no `_SRGB` format under PQ).
   `vulkan::format`: the depth format waterfall from
-  `vkGetPhysicalDeviceFormatProperties`.
+  `vkGetPhysicalDeviceFormatProperties`, and `block`: the bytes and texels
+  of one block per aspect (uncompressed, BC, ETC2, EAC, ASTC) for the
+  bounds of a buffer-image copy.
+- `vulkan::barrier`: `synchronization2`'s stages, accesses and layouts
+  lowered to `vkCmdPipelineBarrier`'s for a device without it, each new
+  bit widened to the legacy bits that contain it (`STAGES`, `ACCESSES`).
 - `vulkan::color_space`: every `VkColorSpaceKHR` as a keinbonus description
   (primaries and curve, checked against Vulkan's table; DCI-P3 non-linear is
   XYZ with ST 428's curve; Adobe RGB has chromaticities but no H.273 code

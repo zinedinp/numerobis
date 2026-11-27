@@ -23,7 +23,10 @@
 //!   extent and image count, and when to recreate after a present.
 //! - [`color_space`]: what a `VkColorSpaceKHR` means as a [`keinbonus`]
 //!   colour description, and `VkHdrMetadataEXT` from HDR10 metadata.
-//! - [`format`](mod@format): the depth format waterfall and the `VkFormat`s used.
+//! - [`format`](mod@format): the depth format waterfall, the `VkFormat`s used,
+//!   and one block of a format per aspect for copy bounds.
+//! - [`barrier`]: `synchronization2`'s stages, accesses and layouts lowered
+//!   to `vkCmdPipelineBarrier`'s on a device without it.
 //!
 //! ```
 //! use numerobis::vulkan::{ApiVersion, Capability as Cap, Instance, Offer, Probe};
@@ -54,6 +57,7 @@ use std::ffi::CStr;
 use std::fmt;
 
 pub mod alloc;
+pub mod barrier;
 pub mod cache;
 pub mod caps;
 pub mod color_space;
